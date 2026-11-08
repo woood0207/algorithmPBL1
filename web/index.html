@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>캠퍼스 경로 탐색</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>캠퍼스 경로 탐색</h1>
+  <nav id="tabs">
+    <button data-tab="search" aria-pressed="true">경로 탐색</button>
+    <button data-tab="analysis" aria-pressed="false">통계 분석</button>
+  </nav>
+  <span id="counts" class="muted"></span>
+  <button id="theme" class="ghost" title="밝게/어둡게">테마</button>
+</header>
+
+<main id="tab-search">
+  <aside>
+    <section>
+      <h2>경로</h2>
+      <div class="seg" id="clickMode">
+        <button data-v="s" aria-pressed="true">출발</button>
+        <button data-v="t" aria-pressed="false">도착</button>
+        <button data-v="l" aria-pressed="false">랜드마크</button>
+        <button data-v="w" aria-pressed="false" class="needs-via">경유지</button>
+        <button data-v="z" aria-pressed="false" class="needs-wdw">구역 중심</button>
+      </div>
+      <p class="hint" id="modeHint">지도를 클릭하면 출발지로 지정합니다.</p>
+      <div class="two">
+        <label>출발 ID<input id="start" type="number" list="ids"></label>
+        <label>도착 ID<input id="goal" type="number" list="ids"></label>
+      </div>
+      <datalist id="ids"></datalist>
+      <details>
+        <summary>좌표로 지정</summary>
+        <label>출발 좌표 (위도 경도)<input id="startCoord" placeholder="36.0115136 129.331617"></label>
+        <label>도착 좌표 (위도 경도)<input id="goalCoord" placeholder="36.0078929 129.3287292"></label>
+        <label>최대 연결 거리 (m)<input id="maxSnap" type="number" value="500" min="1"></label>
+        <button id="applyCoord">가까운 정점에 연결</button>
+      </details>
+    </section>
+
+    <section>
+      <h2>나란히 비교할 알고리즘</h2>
+      <label>구성 불러오기
+        <select id="preset">
+          <option value="weights">가중치 비교 (w = 0, 1, 3)</option>
+          <option value="alt">Dijkstra · A* · ALT</option>
+          <option value="greedy">Greedy · Beam · Local · Random</option>
+          <option value="bfs">BFS · 양방향 Dijkstra</option>
+          <option value="wdw">도보-차량-도보</option>
+          <option value="via">경유지</option>
+          <option value="custom" hidden>직접 구성</option>
+        </select>
+      </label>
+      <div id="panelRows"></div>
+      <div class="row"><button id="addPanel" class="ghost">패널 추가</button></div>
+      <p class="hint" id="algoHint"></p>
+    </section>
+
+    <section class="needs-search">
+      <h2>탐색 옵션</h2>
+      <div class="two">
+        <label>Beam 폭<input id="beamWidth" type="number" min="1" max="100" value="5"></label>
+        <label>이동·확장 예산<input id="budget" type="number" min="1" max="50000" value="2000"></label>
+        <label>Random 시드<input id="seed" type="number" value="42"></label>
+      </div>
+      <label class="check"><input id="noRevisit" type="checkbox"> 보행 알고리즘 재방문 금지</label>
+    </section>
+
+    <section class="needs-via">
+      <h2>경유지 후보</h2>
+      <label>노드 ID (공백으로 구분)<input id="waypoints"></label>
+      <p class="hint">출발·도착에서 Dijkstra를 한 번씩 돌려 총거리가 가장 짧은 후보를 고릅니다.</p>
+    </section>
+
+    <section class="needs-wdw">
+      <h2>도보-차량-도보</h2>
+      <div class="two">
+        <label>차량 구역 반경 (m)<input id="driveRadius" type="number" min="1" value="200"></label>
+        <label>구역 중심
+          <button id="zoneReset" class="ghost">지도 중심으로</button></label>
+        <label>도보 (km/h)<input id="walkKmh" type="number" min="0.1" step="0.1" value="5"></label>
+        <label>차량 (km/h)<input id="driveKmh" type="number" min="0.1" step="1" value="50"></label>
+      </div>
+      <label>차량 간선 기준
+        <select id="driveRule">
+          <option value="edge">양 끝 정점이 모두 구역 안</option>
+          <option value="node">도착 정점만 구역 안 (원본 코드)</option>
+        </select>
+      </label>
+    </section>
+
+    <section>
+      <h2>ALT 랜드마크</h2>
+      <div class="row"><span>개수</span><input type="range" id="k" min="1" max="16" value="4"><b id="kVal" class="num">4</b></div>
+      <div class="row">
+        <select id="lmMethod">
+          <option value="farthest">Farthest (도로 거리)</option>
+          <option value="random">Random</option>
+          <option value="geo_farthest">Farthest (직선거리)</option>
+        </select>
+        <button id="rePick" class="ghost">다시 뽑기</button>
+      </div>
+      <p class="hint" id="preInfo"></p>
+    </section>
+
+    <section>
+      <h2>지도 표시</h2>
+      <div class="checks">
+        <label class="check"><input type="checkbox" data-layer="tiles" checked> OSM 배경</label>
+        <label class="check"><input type="checkbox" data-layer="vertices" checked> 정점</label>
+        <label class="check"><input type="checkbox" data-layer="labels"> 정점 번호</label>
+        <label class="check"><input type="checkbox" data-layer="boundary" checked> 추출 반경</label>
+        <label class="check"><input type="checkbox" data-layer="frontier" checked> Open list</label>
+        <label class="check"><input type="checkbox" data-layer="tree" checked> 탐색 트리</label>
+        <label class="check"><input type="checkbox" data-layer="relaxed"> 완화한 간선</label>
+        <label class="check"><input type="checkbox" data-layer="heat"> h 정확도 히트맵</label>
+      </div>
+      <div class="row"><span>배경 진하기</span><input type="range" id="tileOpacity" min="0" max="100" value="45"></div>
+      <button id="fit" class="ghost wide">전체 보기</button>
+    </section>
+  </aside>
+
+  <div class="content">
+    <div class="card playbar">
+      <button id="play" class="primary">재생</button>
+      <button id="step">한 단계</button>
+      <button id="reset">처음</button>
+      <button id="finish">끝까지</button>
+      <span class="row grow"><input type="range" id="scrub" min="0" max="0" value="0" aria-label="확장 시계"></span>
+      <b id="clock" class="num"></b>
+      <span class="row"><span class="muted">속도</span><input type="range" id="speed" min="0" max="100" value="50"><span id="speedVal" class="num muted"></span></span>
+    </div>
+    <div id="panels" class="panels"></div>
+    <div class="legend">
+      <span><i class="grad"></i>확장 순서 (먼저 → 나중)</span>
+      <span><i class="dot" style="background:#ff9f1c"></i>Open list</span>
+      <span><i class="dot" style="background:#9467bd"></i>역방향</span>
+      <span><i class="dot" style="background:#e48389"></i>Beam 제외</span>
+      <span><i class="bar" style="background:#d62728"></i>최종 경로</span>
+      <span><i class="bar" style="background:#0a35f3"></i>차량 구간</span>
+      <span><i class="dot" style="background:limegreen"></i>출발</span>
+      <span><i class="dot" style="background:red"></i>도착</span>
+      <span><i class="dia"></i>랜드마크</span>
+    </div>
+    <div id="status" role="status" class="muted"></div>
+    <div id="hover" class="muted">드래그: 이동 · 휠: 확대 · 클릭: 지정 · 도로에 마우스를 올리면 간선 정보가 나옵니다.</div>
+
+    <div class="card">
+      <h2>패널 결과</h2>
+      <div class="scroll"><table id="panelTable"></table></div>
+      <div id="detail"></div>
+      <div class="row">
+        <button id="saveTrace" class="ghost">Trace JSON 저장</button>
+        <button id="saveRoute" class="ghost">경로 JSON 저장</button>
+        <label class="ghost filebtn">Trace JSON 불러오기<input id="loadTrace" type="file" accept=".json" multiple hidden></label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>같은 조건 전체 비교</h2>
+      <div class="row">
+        <button id="compare" class="primary">전체 비교 실행</button>
+        <button id="exportCompare" class="ghost">결과 JSON 저장</button>
+      </div>
+      <div class="scroll"><table id="compareTable"></table></div>
+      <p class="hint">행을 클릭하면 그 알고리즘의 최종 경로를 보여 주고, 시계를 움직이면 과정을 볼 수 있습니다. 시간은 워밍업 뒤 3회 측정한 중앙값이고 Trace 생성 비용을 포함합니다. ALT 전처리 시간은 따로 표시하며 행마다 더하면 안 됩니다. 보행 방문 횟수와 탐색 확장 횟수는 같은 연산이 아닙니다.</p>
+    </div>
+
+    <details class="card">
+      <summary>ALT 휴리스틱이 하는 일</summary>
+      <p>랜드마크 L마다 전처리로 Dijkstra를 두 번 돌려 d(L, v)와 d(v, L)을 모든 v에 대해 저장합니다. 탐색 중에는 삼각 부등식으로 남은 거리 d(v, t)의 하한을 얻습니다.</p>
+      <p class="formula">h(v) = max<sub>L</sub> max( d(L,t) − d(L,v),&nbsp; d(v,L) − d(t,L) ) &nbsp;≤&nbsp; d(v,t)</p>
+      <ol>
+        <li><b>왜 하한인가.</b> d(L,t) ≤ d(L,v) + d(v,t) 이므로 d(L,t) − d(L,v) ≤ d(v,t). 다른 항도 d(v,L) ≤ d(v,t) + d(t,L)에서 같은 방식으로 나옵니다. 그래서 admissible이고, 같은 논리로 consistent여서 한 번 확정된 노드는 다시 볼 필요가 없습니다.</li>
+        <li><b>언제 정확한가.</b> 랜드마크가 t의 "뒤쪽"에 있어서 v → t 경로가 L → t 최단 경로 위에 놓이면 h(v) = d(v,t)가 됩니다. 그래서 랜드마크는 지도 가장자리에 흩어 놓는 게 좋습니다.</li>
+        <li><b>직선거리 A*와 비교.</b> 직선거리는 도로가 돌아가는 만큼을 모릅니다. ALT는 실제 도로 거리로 만든 하한이라 보통 더 크고, 그만큼 확장 수가 줄어듭니다. 히트맵을 켜고 노드에 마우스를 올리면 두 값을 비교할 수 있습니다.</li>
+        <li><b>비용.</b> 전처리 2k번의 Dijkstra, 메모리 2k·n개의 거리. 질의마다 h(v) 계산은 O(k).</li>
+      </ol>
+    </details>
+  </div>
+</main>
+
+<main id="tab-analysis" hidden>
+  <div class="content wide-content">
+    <div class="card">
+      <p class="muted">가까운 점끼리는 최적에 가깝고 멀수록 벗어난다는 가설을 랜덤 (출발, 도착) 쌍으로 검증합니다. 기준값은 Dijkstra 최적해입니다.</p>
+      <div class="ctl">
+        <label>랜덤 쌍 수<input id="np" type="number" value="300" min="20" max="2000"></label>
+        <label>거리 구간 수<input id="nb" type="number" value="5" min="2" max="10"></label>
+        <label>Beam 폭<input id="bw" type="number" value="5" min="1" max="50"></label>
+        <label>예산(스텝)<input id="bud" type="number" value="2000" min="50"></label>
+        <label>Random 시드 수<input id="rs" type="number" value="10" min="1" max="50"></label>
+        <label>표본 시드<input id="sseed" type="number" value="42"></label>
+        <span id="algs" class="checks-inline"></span>
+        <button id="run" class="primary">실험 실행</button>
+        <span id="prog" class="muted"></span>
+      </div>
+    </div>
+    <div class="card"><h2>요약 (Dijkstra 대비)</h2><div class="scroll"><table id="ov"></table></div>
+      <p class="hint">비용비 = 알고리즘 비용 ÷ 최적 비용 (1.0이 최적). 확장수비 = 확장 노드 ÷ Dijkstra 확장 노드. 속도배 = Dijkstra 시간 ÷ 알고리즘 시간. ρ = 거리와 최적 여부의 스피어만 상관(음수일수록 멀수록 나쁨). BFS는 간선 수가 최소인 경로를 찾으므로 가중치(m) 기준으로는 최적이 아닙니다.</p></div>
+    <div class="card"><h2>거리 구간별 지표 (구간 = 최적 경로 길이 분위수)</h2>
+      <div class="charts"><canvas id="c1"></canvas><canvas id="c2"></canvas><canvas id="c3"></canvas><canvas id="c4"></canvas></div>
+      <p class="hint">비용비 그래프는 y축을 2.5에서 자르고, 그 범위를 크게 벗어나는 알고리즘은 표에서 확인하세요. 막대 오차범위는 95% Wilson 신뢰구간입니다.</p></div>
+    <div class="card"><h2>쌍별 산점도: 최적 경로 길이 vs 비용비 <select id="sa"></select></h2>
+      <canvas id="c5" class="scatter"></canvas><p class="hint">점을 클릭하면 아래 지도에 그 쌍이 로드됩니다.</p></div>
+    <div class="card" id="mapcard"><h2>지도에서 경로 비교</h2>
+      <div class="ctl"><button class="ghost" id="rp">랜덤 쌍</button><span id="vis" class="chips"></span><span class="muted" id="pickHint">지도에서 두 지점을 클릭하세요 (출발 → 도착)</span></div>
+      <div id="amap" class="amap"></div>
+      <div class="scroll"><table id="rt"></table></div>
+      <p class="hint">알고리즘 버튼을 누를 때마다 끔 → 경로+탐색 → 탐색만 → 경로만 순서로 바뀝니다. 점선은 목적지에 도달하지 못한 경로입니다.</p></div>
+  </div>
+</main>
+
+<div id="tip" hidden></div>
+<script src="map.js"></script>
+<script src="app.js"></script>
+<script src="analysis.js"></script>
+</body>
+</html>
