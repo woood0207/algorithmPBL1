@@ -11,6 +11,8 @@
   python main.py benchmark --start 1 --goal 60 --repeats 5
   python main.py analyze --pairs 300 --bins 5
   python main.py build --center 36.01243647 129.32180209 --radius 1000
+  python main.py elevation                        # 정점 고도를 받아 data/road_elevation.csv 저장
+  python main.py route --start 1 --end 100 --solver alt_uphill --uphill 8
   python main.py selftest
 """
 import argparse
@@ -125,6 +127,8 @@ def cmd_route(args):
             options["drive_center"] = tuple(args.drive_center)
     if args.solver == "via":
         options = dict(waypoints=args.waypoints or [])
+    if args.solver == "alt_uphill":
+        options = dict(uphill=args.uphill, landmarks=args.landmarks)
     alt = make_alt(graph, args, args.heuristic in ("alt", "max"))
     trace = run_search(graph, args.solver, start["id"], end["id"], heuristic=args.heuristic, alt=alt, **options)
     if not trace.found:
@@ -146,6 +150,10 @@ def cmd_route(args):
     (output / f"{stem}.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print("경로:", " → ".join(map(str, trace.path)))
     print(f"{trace.label}: {trace.cost:,.2f} {trace.cost_unit}, 도로 거리 {result['distance_m']:,.2f} m")
+    if "climb_m" in trace.extra:
+        x = trace.extra
+        result.update({k: x[k] for k in ("uphill_lambda", "climb_m", "descent_m", "shortest_distance_m", "shortest_climb_m")})
+        print(f"오르막 {x['climb_m']:.0f} m (최단 경로 {x['shortest_distance_m']:,.0f} m는 오르막 {x['shortest_climb_m']:.0f} m)")
     for seg in result["route_segments"]:
         if "minutes" in seg:
             print(f"  {seg['kind']}: {seg['meters']:.1f} m, {seg['minutes']:.2f} 분")
@@ -245,6 +253,16 @@ def cmd_serve(args):
     serve(graph, str(args.data_dir), args.port)
 
 
+def cmd_elevation(args):
+    from elevation import elevation_path, fetch_elevation
+
+    nodes, edges, graphml = dataset_paths(args.data_dir)
+    graph = load_graph(nodes, edges)
+    path = elevation_path(nodes)
+    z = fetch_elevation(graph.coords, path)
+    print(f"저장: {path} (정점 {len(z)}개, 고도 {min(z.values()):.0f}~{max(z.values()):.0f} m)")
+
+
 def cmd_selftest(args):
     sys.argv = sys.argv[:1]
     os.chdir(HERE)
@@ -318,9 +336,14 @@ def parse_args():
     p.add_argument("--output-dir", default=str(HERE / "output" / "road_route"))
     p.add_argument("--serve", action="store_true")
     p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--uphill", type=float, default=8.0, help="alt_uphill: 1 m 오르막 = 평지 몇 m (λ)")
     alt_options(p)
     drive_options(p)
     p.set_defaults(func=cmd_route)
+
+    p = sub.add_parser("elevation", help="정점 고도를 Open-Meteo에서 받아 road_elevation.csv 저장 (인터넷 필요)")
+    p.add_argument("--data-dir", default=str(HERE / "data"))
+    p.set_defaults(func=cmd_elevation)
 
     p = common(sub.add_parser("via", help="경유지 후보 중 최선을 고르는 최단 경로"))
     p.add_argument("--start", type=int)

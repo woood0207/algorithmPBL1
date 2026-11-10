@@ -94,6 +94,7 @@ main.py          CLI 입구
 graph_data.py    CSV, GraphML 읽기
 search.py        모든 탐색 알고리즘과 등록부
 landmarks.py     ALT 전처리와 휴리스틱
+elevation.py     정점 고도와 업힐 가중치 (ALT 업힐 회피)
 trace_io.py      Trace 형식, 저장·불러오기
 visualize.py     PNG, GIF
 analysis.py      전체 비교, 통계 실험
@@ -103,6 +104,17 @@ web/             웹 뷰어 (서버가 준 Trace를 그리기만 함)
 test_engine.py   회귀 테스트
 data/            road_route 그래프와 예전 830 그래프
 ```
+
+## ALT 업힐 회피 (`alt_uphill`)
+
+오르막을 덜 타는 경로를 찾는 ALT입니다. 고도는 `data/road_elevation.csv`(정점별 고도, m)에 있고, 다른 지역으로 `build`한 뒤에는 `python main.py elevation`으로 다시 받습니다(Open-Meteo Elevation API, Copernicus DEM 90 m, 인터넷 필요).
+
+- **간선 비용**: `c'(u, v) = 거리 + λ × max(0, 고도(v) − 고도(u))`. 같은 도로도 올라가는 방향만 비싸지므로 정점이 아니라 방향 있는 간선에 붙입니다. λ는 "1 m 오르는 것 = 평지 λ m"이고 기본 8은 Naismith 규칙(600 m 오르기 ≈ 평지 5 km)에서 왔습니다. λ를 키울수록 오르막을 더 피하고, λ = 0이면 보통 최단 경로입니다.
+- **ALT**: 랜드마크 거리표를 c' 그래프에서 다시 계산해야 h가 c' 기준 하한이 됩니다. (λ, 랜드마크)별로 한 번 만들고 캐시합니다.
+- **웹**: 구성 불러오기 → "ALT · ALT 업힐 회피". 패널마다 λ를 바꿀 수 있습니다. 지도의 주황 도로는 경사 3% 이상 구간(진할수록 가파름), 결과 경로의 분홍은 오르막, 파랑은 평지·내리막입니다. 아래 상세에 오르막 총량과 "업힐 무시 최단 경로 대비 몇 m 덜 오르고 몇 m 더 걷는지"가 나옵니다.
+- **CLI**: `python main.py route --start 350 --end 561 --solver alt_uphill --uphill 8`
+- **예시** (기본 출발 350 → 도착 561): 최단 3,599 m / 오르막 143 m → λ=8이면 3,658 m / 129 m, λ=30이면 3,699 m / 127 m.
+- **한계**: 90 m 격자 DEM이라 짧은 간선의 고도차가 부정확합니다(경사 30% 넘는 간선이 1,888개 중 156개). 경로 전체 오르막 합계는 대략 맞지만 간선 하나하나의 경사는 믿기 어렵습니다.
 
 ## 새 알고리즘 추가
 
@@ -123,7 +135,7 @@ register_algorithm("my_algo", "내 알고리즘", my_algo, uses_heuristic=True, 
 
 ## 검증
 
-- `python main.py selftest`: 정확 알고리즘과 Dijkstra 비교, Weighted A* 비용 상한, ALT 하한, 경유지, 도보-차량-도보, Trace 입출력 등 17개.
+- `python main.py selftest`: 정확 알고리즘과 Dijkstra 비교, Weighted A* 비용 상한, ALT 하한, 경유지, 도보-차량-도보, Trace 입출력 등 19개 (ALT 업힐 회피가 c' 그래프의 Dijkstra와 같은 비용인지 포함).
 - 팀원 원본 코드와 같은 입력으로 비교: `road_route` Dijkstra, `path_algorithms`의 정확·비정확 알고리즘, `shortest_via`, `min_walk_drive_walk`(`--drive-rule node`)에서 300개 쌍 기준 일치(위의 BFS 차이 제외).
 
 지도 데이터 © OpenStreetMap contributors (ODbL).

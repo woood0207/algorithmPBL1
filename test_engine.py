@@ -165,5 +165,29 @@ class TestTrace(Base):
         path.unlink()
 
 
+class TestUphill(Base):
+    def test_matches_dijkstra_on_uphill_graph(self):
+        """ALT 업힐 회피 = c' 그래프에서 Dijkstra 최적. λ=0이면 원래 최단 거리."""
+        from elevation import uphill_graph
+        self.assertTrue(self.g.elevation)
+        for lam in (0, 8, 50):
+            pg = uphill_graph(self.g, lam)
+            for s, t in self.pairs[:20]:
+                r = run_search(self.g, "alt_uphill", s, t, uphill=lam)
+                truth = distances(pg, s).get(t)
+                if truth is None:
+                    self.assertFalse(r.found)
+                    continue
+                self.assert_valid(r)
+                self.assertAlmostEqual(r.cost, truth, places=6)
+                if lam == 0:
+                    self.assertAlmostEqual(r.extra["distance_m"], r.extra["shortest_distance_m"], places=6)
+
+    def test_less_climb_with_larger_lambda(self):
+        s, t = self.g.default_endpoints()
+        climbs = [run_search(self.g, "alt_uphill", s, t, uphill=lam).extra["climb_m"] for lam in (0, 8, 100)]
+        self.assertEqual(climbs, sorted(climbs, reverse=True))
+
+
 if __name__ == "__main__":
     unittest.main()

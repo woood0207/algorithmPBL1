@@ -52,6 +52,7 @@ class Graph:
     stats: dict = field(default_factory=dict)
     main_nodes: list = field(default_factory=list)  # 가장 큰 약연결 성분
     component: dict = field(default_factory=dict)
+    elevation: dict = field(default_factory=dict)   # id -> 고도(m), road_elevation.csv가 있을 때만
 
     def neighbors(self, u):
         return self.adj.get(u, {}).items()
@@ -186,6 +187,11 @@ def load_graph(nodes_csv, edges_csv, graphml=None):
         n = len(g.coords)
         g.center = (sum(c[0] for c in g.coords.values()) / n, sum(c[1] for c in g.coords.values()) / n)
 
+    from elevation import elevation_path, load_elevation
+    z = load_elevation(elevation_path(nodes_csv))
+    if z and set(g.coords) <= set(z):
+        g.elevation = {n: z[n] for n in g.coords}
+
     _label_components(g)
     g.stats = {"nodes": len(g.coords),
                "edges": sum(len(n) for n in g.adj.values()),
@@ -195,7 +201,8 @@ def load_graph(nodes_csv, edges_csv, graphml=None):
                "curved_roads": curved,
                "weak_components": len(set(g.component.values())),
                "main_component": len(g.main_nodes),
-               "alpha": g.alpha}
+               "alpha": g.alpha,
+               "has_elevation": bool(g.elevation)}
     return g
 
 

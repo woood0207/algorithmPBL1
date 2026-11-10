@@ -14,7 +14,7 @@ from search import ALGORITHMS, HEURISTICS, run_search
 from trace_io import trace_to_dict
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
-OPTION_KEYS = ("beam_width", "budget", "seed", "no_revisit", "waypoints", "drive_radius", "walk_kmh", "drive_kmh", "drive_rule")
+OPTION_KEYS = ("beam_width", "budget", "seed", "no_revisit", "waypoints", "drive_radius", "walk_kmh", "drive_kmh", "drive_rule", "uphill")
 
 
 class App:
@@ -32,6 +32,7 @@ class App:
             dataset=self.dataset, stats=g.stats, center=g.center, radius=g.radius, network_type=g.network_type,
             nodes=[[n, *c] for n, c in g.coords.items()],
             roads=[[r.id, r.u, r.v, r.w, r.name, r.highway, r.coords] for r in g.roads],
+            elevation=g.elevation or None,
             main_nodes=g.main_nodes, default_start=start, default_goal=goal,
             algorithms=[dict(id=a.id, label=a.label, uses_heuristic=a.uses_heuristic, hint=a.hint,
                              default_heuristic=a.default_heuristic, default_weight=a.default_weight,
@@ -73,6 +74,8 @@ class App:
             spec = ALGORITHMS[panel["algorithm"]]
             if panel["algorithm"] == "via":
                 kw = {"waypoints": options.get("waypoints", [])}
+            elif panel["algorithm"] == "alt_uphill":
+                kw = {"uphill": panel.get("uphill", options.get("uphill", 8.0)), "landmarks": body.get("landmarks") or None}
             elif panel["algorithm"] == "walk_drive_walk":
                 kw = {k: options[k] for k in ("drive_center", "drive_radius", "walk_kmh", "drive_kmh", "drive_rule") if k in options}
             else:

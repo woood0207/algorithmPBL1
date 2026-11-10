@@ -52,6 +52,8 @@ class Context:
     walk_kmh: float = 5.0
     drive_kmh: float = 50.0
     drive_rule: str = "edge"         # edge: 양 끝이 구역 안, node: 도착 정점만 구역 안 (원본 코드)
+    uphill: float = 8.0              # 업힐 회피 ALT: 1 m 오르막 = 평지 λ m
+    landmarks: list | None = None    # 업힐 회피 ALT: 랜드마크 ID (없으면 farthest 4개)
 
 
 @dataclass
@@ -427,6 +429,56 @@ def walk_drive_walk(c):
     return trace
 
 
+# ---------------------------------------------------------------- 업힐 회피 ALT (pbl1/alt_visualizer 확장)
+_UPHILL_CACHE = {}
+
+
+def _uphill_alt(graph, lam, landmarks):
+    """(λ, 랜드마크)별로 c' 그래프와 ALT 표를 한 번만 만든다."""
+    from elevation import uphill_graph
+    from landmarks import ALT, pick_landmarks
+
+    key = (id(graph), lam, tuple(landmarks or ()))
+    if key not in _UPHILL_CACHE:
+        if len(_UPHILL_CACHE) >= 16:
+            _UPHILL_CACHE.pop(next(iter(_UPHILL_CACHE)))
+        pg = uphill_graph(graph, lam)
+        _UPHILL_CACHE[key] = (pg, ALT(pg, landmarks or pick_landmarks(pg, 4, "farthest")))
+    return _UPHILL_CACHE[key]
+
+
+def alt_uphill(c):
+    """간선 비용 c'(u,v) = w + λ·max(0, z(v) - z(u)) 위에서 ALT A*.
+    ALT 표도 c' 그래프에서 계산하므로 h는 c' 기준 하한이고, 찾은 경로는 c' 최소다."""
+    from elevation import UPHILL_MIN_M, climb, path_profile
+
+    g, lam = c.graph, max(0.0, float(c.uphill))
+    pg, alt = _uphill_alt(g, lam, c.landmarks)
+    trace = weighted_astar(pg, c.start, c.goal, 1, alt.heuristic(c.goal))
+    trace.cost_unit = "m 환산"
+    trace.extra.update(uphill_lambda=lam, landmarks=alt.landmarks, uphill_prep_ms=alt.prep_ms)
+    if not trace.found:
+        return trace
+
+    dist, up, down = path_profile(g, trace.path)
+    plain = weighted_astar(g, c.start, c.goal, 0, lambda v: 0.0).path   # 업힐 무시한 최단 경로 (비교용)
+    p_dist, p_up, _ = path_profile(g, plain)
+    trace.extra.update(distance_m=dist, climb_m=up, descent_m=down,
+                       shortest_distance_m=p_dist, shortest_climb_m=p_up)
+
+    groups = []
+    for e, a, b in zip(trace.edge_ids, trace.path, trace.path[1:]):
+        dz = climb(g, a, b)
+        kind = "uphill" if dz >= UPHILL_MIN_M else "flat"
+        if not groups or groups[-1]["kind"] != kind:
+            groups.append(dict(kind=kind, edge_ids=[], meters=0.0, climb=0.0))
+        groups[-1]["edge_ids"].append(e)
+        groups[-1]["meters"] += g.adj[a][b]
+        groups[-1]["climb"] += max(0.0, dz)
+    trace.segments = groups
+    return trace
+
+
 # ---------------------------------------------------------------- 등록
 register_algorithm("dijkstra", "Dijkstra", lambda c: weighted_astar(c.graph, c.start, c.goal, 0, c.h),
                    hint="누적 비용 기준 · 최적 비용 기준선", default_weight=0, default_heuristic="zero")
@@ -450,6 +502,8 @@ register_algorithm("via", "경유지 Dijkstra", shortest_via, comparable=False, 
                    hint="출발·도착에서 Dijkstra 2회 · 후보 중 총거리 최소인 경유지 선택")
 register_algorithm("walk_drive_walk", "도보-차량-도보", walk_drive_walk, comparable=False, default_heuristic="zero",
                    hint="상태 3개짜리 Dijkstra · 이동 시간(분) 최소")
+register_algorithm("alt_uphill", "ALT 업힐 회피", alt_uphill, comparable=False, default_heuristic="zero",
+                   hint="간선 비용 = 거리 + λ × 오르막(m) · ALT 표도 이 비용으로 계산 · 지도: 주황=경사 3%↑ 도로, 경로 분홍=오르막 파랑=평지·내리막")
 
 
 def build_heuristic(graph, name, goal, alt=None):
@@ -496,6 +550,8 @@ def run_search(graph, algorithm, start, goal, heuristic=None, weight=None, alt=N
     trace.heuristic = name if spec.uses_heuristic else None
     trace.weight = weight if spec.default_weight is not None else None
     trace.label = make_label(spec, name, weight)
+    if algorithm == "alt_uphill":
+        trace.label += f" (λ={trace.extra['uphill_lambda']:g})"
     return trace
 
 
