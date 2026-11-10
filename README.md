@@ -60,7 +60,7 @@ python main.py route --start 1 --end 100 --serve
 ```
 
 ```bash
-python main.py route --start-coord 36.0115136 129.331617 --end-coord 36.0078929 129.3287292 --solver walk_drive_walk --drive-radius 400
+python main.py route --start-coord 36.0115136 129.331617 --end-coord 36.0078929 129.3287292 --solver vehicle_switch --drive-radius 400
 ```
 
 ```bash
@@ -124,6 +124,6 @@ register_algorithm("my_algo", "내 알고리즘", my_algo, uses_heuristic=True, 
 ## 검증
 
 - `python main.py selftest`: 정확 알고리즘과 Dijkstra 비교, Weighted A* 비용 상한, ALT 하한, 경유지, 도보-차량-도보, Trace 입출력 등 17개.
-- 팀원 원본 코드와 같은 입력으로 비교: `road_route` Dijkstra, `path_algorithms`의 정확·비정확 알고리즘, `shortest_via`, `min_walk_drive_walk`(`--drive-rule node`)에서 300개 쌍 기준 일치(위의 BFS 차이 제외).
+- 팀원 원본 코드와 같은 입력으로 비교: `road_route` Dijkstra, `path_algorithms`의 정확·비정확 알고리즘, `shortest_via`, `vehicle_switch`(`--drive-rule node`)에서 300개 쌍 기준 일치(위의 BFS 차이 제외).
 
 지도 데이터 © OpenStreetMap contributors (ODbL).

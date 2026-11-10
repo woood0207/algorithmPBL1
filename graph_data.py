@@ -11,6 +11,7 @@ import json
 import math
 import re
 import xml.etree.ElementTree as ET
+from typing import Dict, List, Tuple
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -26,6 +27,11 @@ def haversine(lat1, lon1, lat2, lon2):
     return 2 * EARTH_RADIUS_M * math.asin(min(1.0, math.sqrt(a)))
 
 
+class Vehicle:
+    WALK = "walk"
+    DRIVE = "drive"
+    BIKE = "bike"
+
 @dataclass
 class Road:
     """CSV 한 행. id는 0부터, CSV 행 번호(edge_row)는 id + 1이다."""
@@ -36,15 +42,20 @@ class Road:
     coords: list = field(default_factory=list)  # 지도용 도로 굴곡: [(위도, 경도), ...]
     name: str = ""
     highway: str = ""
+    permissions: Dict[Vehicle, bool] = field(default_factory=dict) # Dict instead of set to keep dataclass serializable
 
+    def permits(self, vehicle: Vehicle):
+        if vehicle in self.permissions:
+            return self.permissions[vehicle]
+        return False
 
 @dataclass
 class Graph:
     coords: dict = field(default_factory=dict)    # id -> (lat, lon)
     adj: dict = field(default_factory=dict)       # id -> {neighbor: weight}
     radj: dict = field(default_factory=dict)      # 역방향 인접 리스트
-    edge_id: dict = field(default_factory=dict)   # (u, v) -> 가장 짧은 평행 간선의 Road.id
-    roads: list = field(default_factory=list)     # CSV 모든 행 (평행 간선, self-loop 포함)
+    edge_id: Dict[Tuple[int, int], int] = field(default_factory=dict)   # (u, v) -> 가장 짧은 평행 간선의 Road.id
+    roads: List[Road] = field(default_factory=list)     # CSV 모든 행 (평행 간선, self-loop 포함)
     alpha: float = 0.0                            # min(weight / 직선거리)
     center: tuple | None = None
     radius: float | None = None
@@ -147,7 +158,7 @@ def load_graph(nodes_csv, edges_csv, graphml=None):
             u, v, w = int(row["source"]), int(row["target"]), float(row["weight"])
             if u not in g.coords or v not in g.coords or not math.isfinite(w) or w < 0:
                 raise ValueError(f"잘못된 간선입니다: {u} -> {v}, weight={w}")
-            road = Road(len(g.roads), u, v, w, [g.coords[u], g.coords[v]])
+            road = Road(len(g.roads), u, v, w, [g.coords[u], g.coords[v]], permissions=_edge_permissions(row))
             g.roads.append(road)
             if u == v:                 # 자기 자신으로 가는 간선: 최단경로에 의미 없음
                 n_self += 1
@@ -215,3 +226,24 @@ def _label_components(g):
         sizes[cid] = count
     main = max(sizes, key=sizes.get)
     g.main_nodes = [n for n in g.coords if g.component[n] == main]
+
+def _edge_permissions(edge: Dict[str, str | None]):
+    permissions = {}
+    match edge["road_use"]:
+        case "walk_only": 
+            permissions[Vehicle.WALK] = True
+            permissions[Vehicle.DRIVE] = False
+        case "drive_only": 
+            permissions[Vehicle.WALK] = False
+            permissions[Vehicle.DRIVE] = True
+        case "both": 
+            permissions[Vehicle.WALK] = True
+            permissions[Vehicle.DRIVE] = True
+    match edge["mode"]:
+        case "walk": 
+            permissions[Vehicle.WALK] = True
+        case "drive": 
+            permissions[Vehicle.DRIVE] = True
+        case "bike": 
+            permissions[Vehicle.BIKE] = True
+    return permissions

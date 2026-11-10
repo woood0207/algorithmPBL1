@@ -19,7 +19,7 @@ const PRESETS = {
   alt: () => [{ algorithm: 'dijkstra' }, { algorithm: 'astar', heuristic: 'haversine' }, { algorithm: 'astar', heuristic: 'alt' }],
   greedy: () => ['greedy', 'beam', 'local', 'random'].map(a => ({ algorithm: a, heuristic: 'geo' })),
   bfs: () => [{ algorithm: 'bfs' }, { algorithm: 'bidirectional' }],
-  wdw: () => [{ algorithm: 'walk_drive_walk' }],
+  wdw: () => [{ algorithm: 'vehicle_switch' }],
   via: () => [{ algorithm: 'via' }],
 };
 const S = {
@@ -123,7 +123,7 @@ function hOf(tr, id) {
 }
 
 function drawZoneRoads(v, b, tr) {
-  if (tr.algorithm !== 'walk_drive_walk') return;
+  if (tr.algorithm !== 'vehicle_switch') return;
   const zone = zoneNodes();
   b.save(); b.strokeStyle = '#0a35f3'; b.globalAlpha = 0.45; b.lineWidth = 2.5; b.beginPath();
   for (const r of World.roads) if (r.u < r.v && zone.has(r.u) && zone.has(r.v)) v.tracePts(b, r);
@@ -376,7 +376,7 @@ function panelRows() {
     box.append(row);
   });
   $('algoHint').textContent = [...new Set(S.panels.map(p => algo(p.algorithm).hint))].join(' / ');
-  const via = S.panels.some(p => p.algorithm === 'via'), wdw = S.panels.some(p => p.algorithm === 'walk_drive_walk');
+  const via = S.panels.some(p => p.algorithm === 'via'), wdw = S.panels.some(p => p.algorithm === 'vehicle_switch');
   document.querySelectorAll('.needs-via').forEach(e => { e.hidden = !via; });
   document.querySelectorAll('.needs-wdw').forEach(e => { e.hidden = !wdw; });
   if ((S.mode === 'w' && !via) || (S.mode === 'z' && !wdw)) setMode('s');
@@ -394,7 +394,7 @@ function panelTable() {
 function detailBlock() {
   let h = '';
   for (const t of S.traces) {
-    if (t.algorithm === 'walk_drive_walk' && t.found) {
+    if (t.algorithm === 'vehicle_switch' && t.found) {
       h += `<p><b>${t.label}</b> 총 ${fmt(t.cost, 2)}분 · 도로 ${fmt(t.extra.distance_m)} m · 차량 구역 정점 ${t.extra.drive_nodes.length}개<br>` + t.segments.map(s => `${SEGMENT_NAME[s.kind]} ${fmt(s.meters)} m, ${fmt(s.minutes, 2)}분`).join(' → ') + '</p>';
     }
     if (t.algorithm === 'via' && t.extra.ranking) {
