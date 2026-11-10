@@ -11,8 +11,8 @@ const VIRIDIS = Array.from({ length: 128 }, (_, i) => {
   const p = i / 127 * 9, a = Math.floor(p), b = Math.min(9, a + 1), t = p - a;
   return `rgb(${STOPS[a].map((x, j) => Math.round(x + (STOPS[b][j] - x) * t))})`;
 });
-const SEGMENT = { walk1: '#d62728', drive: '#0a35f3', walk2: '#d62728', to_via: '#1f77b4', from_via: '#d62728', uphill: '#d6336c', flat: '#1971c2' };
-const SEGMENT_NAME = { walk1: '도보', drive: '차량', walk2: '도보', to_via: '출발 → 경유', from_via: '경유 → 도착', uphill: '오르막', flat: '평지·내리막' };
+const SEGMENT = { walk1: '#d62728', drive: '#0a35f3', walk2: '#d62728', to_via: '#1f77b4', from_via: '#d62728', uphill: '#d6336c', flat: '#1971c2', stairs: '#212529' };
+const SEGMENT_NAME = { walk1: '도보', drive: '차량', walk2: '도보', to_via: '출발 → 경유', from_via: '경유 → 도착', uphill: '오르막', flat: '평지·내리막', stairs: '계단' };
 const FAIL = { budget: '예산 내 미도달', beam_exhausted: '후보 소진', dead_end: '이동 불가', unreachable: '도달 불가능' };
 const PRESETS = {
   weights: () => [0, 1, 3].map(w => ({ algorithm: 'weighted', heuristic: 'haversine', weight: w })),
@@ -21,7 +21,7 @@ const PRESETS = {
   bfs: () => [{ algorithm: 'bfs' }, { algorithm: 'bidirectional' }],
   wdw: () => [{ algorithm: 'walk_drive_walk' }],
   via: () => [{ algorithm: 'via' }],
-  uphill: () => [{ algorithm: 'astar', heuristic: 'alt' }, { algorithm: 'alt_uphill', uphill: 8 }, { algorithm: 'alt_uphill', uphill: 30 }],
+  uphill: () => [{ algorithm: 'astar', heuristic: 'alt' }, { algorithm: 'alt_uphill', uphill: 8 }, { algorithm: 'alt_uphill', uphill: 8, stairs: 3 }],
 };
 const S = {
   start: null, goal: null, landmarks: [], waypoints: [], zone: null, mode: 's', panels: PRESETS.weights(),
@@ -135,6 +135,9 @@ function drawSteepRoads(v, b) {
     b.strokeStyle = `rgba(232,89,12,${Math.min(0.85, 0.15 + grade * 2.5).toFixed(2)})`;
     b.beginPath(); v.tracePts(b, r); b.stroke();
   }
+  b.strokeStyle = '#7048e8'; b.lineWidth = 2.5; b.setLineDash([3, 3]); b.beginPath();   // 계단
+  for (const r of World.roads) if (r.u < r.v && r.highway.includes('steps')) v.tracePts(b, r);
+  b.stroke();
   b.restore();
 }
 function drawZoneRoads(v, b, tr) {
@@ -394,7 +397,10 @@ function panelRows() {
       const t = document.createElement('span'); t.textContent = '업힐 λ (오르막 1 m = 평지 λ m)'; t.className = 'hint';
       const w = document.createElement('input'); w.type = 'number'; w.min = 0; w.step = 1; w.value = p.uphill ?? 8; w.title = '업힐 가중치 λ';
       w.onchange = () => { p.uphill = Math.max(0, +w.value || 0); customChanged(); };
-      sub.append(t, w); row.append(sub);
+      const t2 = document.createElement('span'); t2.textContent = '계단 배수 (1 = 벌점 없음)'; t2.className = 'hint';
+      const st = document.createElement('input'); st.type = 'number'; st.min = 1; st.step = 0.5; st.value = p.stairs ?? 1; st.title = '계단 거리 배수';
+      st.onchange = () => { p.stairs = Math.max(1, +st.value || 1); customChanged(); };
+      sub.append(t, w, t2, st); row.append(sub);
     }
     box.append(row);
   });
@@ -408,7 +414,7 @@ function customChanged() { $('preset').value = 'custom'; panelRows(); runPanels(
 function panelsChanged() { customChanged(); }
 
 function panelTable() {
-  const unitOf = t => (t.cost_unit || 'm') + (t.extra && t.extra.uphill_lambda != null ? '@' + t.extra.uphill_lambda : '');  // λ가 다르면 비용 함수가 달라 비교하지 않음
+  const unitOf = t => (t.cost_unit || 'm') + (t.extra && t.extra.uphill_lambda != null ? '@' + t.extra.uphill_lambda + '/' + t.extra.stairs_factor : '');  // λ가 다르면 비용 함수가 달라 비교하지 않음
   const bestOf = t => { const c = S.traces.filter(x => x.found && x.cost != null && unitOf(x) === unitOf(t)).map(x => x.cost); return c.length ? Math.min(...c) : null; };
   const mx = Math.max(1, ...S.traces.map(t => t.steps.length));
   let h = '<tr><th>패널</th><th>확장</th><th>비용</th><th>비용/최소</th><th>경로 정점</th><th>시간(ms)</th><th>상태</th></tr>';
@@ -423,8 +429,8 @@ function detailBlock() {
     }
     if (t.algorithm === 'alt_uphill' && t.found) {
       const x = t.extra;
-      h += `<p><b>${t.label}</b> 도로 ${fmt(x.distance_m)} m · 오르막 ${fmt(x.climb_m, 0)} m · 내리막 ${fmt(x.descent_m, 0)} m<br>` +
-        `업힐 무시 최단 경로: ${fmt(x.shortest_distance_m)} m · 오르막 ${fmt(x.shortest_climb_m, 0)} m → ` +
+      h += `<p><b>${t.label}</b> 도로 ${fmt(x.distance_m)} m · 오르막 ${fmt(x.climb_m, 0)} m · 내리막 ${fmt(x.descent_m, 0)} m · 계단 ${fmt(x.stairs_m, 0)} m<br>` +
+        `업힐 무시 최단 경로: ${fmt(x.shortest_distance_m)} m · 오르막 ${fmt(x.shortest_climb_m, 0)} m · 계단 ${fmt(x.shortest_stairs_m, 0)} m → ` +
         `오르막 ${fmt(x.shortest_climb_m - x.climb_m, 0)} m 줄이고 ${fmt(x.distance_m - x.shortest_distance_m)} m 더 걷기<br>` +
         t.segments.map(s => `${SEGMENT_NAME[s.kind]} ${fmt(s.meters, 0)} m${s.kind === 'uphill' ? ` (+${fmt(s.climb, 0)} m)` : ''}`).join(' → ') + '</p>';
     }

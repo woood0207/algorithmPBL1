@@ -170,23 +170,35 @@ class TestUphill(Base):
         """ALT 업힐 회피 = c' 그래프에서 Dijkstra 최적. λ=0이면 원래 최단 거리."""
         from elevation import uphill_graph
         self.assertTrue(self.g.elevation)
-        for lam in (0, 8, 50):
-            pg = uphill_graph(self.g, lam)
+        for lam, stairs in ((0, 1), (8, 1), (50, 1), (8, 3)):
+            pg = uphill_graph(self.g, lam, stairs)
             for s, t in self.pairs[:20]:
-                r = run_search(self.g, "alt_uphill", s, t, uphill=lam)
+                r = run_search(self.g, "alt_uphill", s, t, uphill=lam, stairs=stairs)
                 truth = distances(pg, s).get(t)
                 if truth is None:
                     self.assertFalse(r.found)
                     continue
                 self.assert_valid(r)
                 self.assertAlmostEqual(r.cost, truth, places=6)
-                if lam == 0:
+                if lam == 0 and stairs == 1:
                     self.assertAlmostEqual(r.extra["distance_m"], r.extra["shortest_distance_m"], places=6)
 
     def test_less_climb_with_larger_lambda(self):
         s, t = self.g.default_endpoints()
         climbs = [run_search(self.g, "alt_uphill", s, t, uphill=lam).extra["climb_m"] for lam in (0, 8, 100)]
         self.assertEqual(climbs, sorted(climbs, reverse=True))
+
+    def test_stairs_penalty_avoids_stairs(self):
+        """계단 배수를 키우면 경로의 계단 거리가 늘지 않는다."""
+        hit = 0
+        for s, t in self.pairs:
+            a = run_search(self.g, "alt_uphill", s, t, uphill=0, stairs=1)
+            if not a.found or a.extra["stairs_m"] == 0:
+                continue
+            b = run_search(self.g, "alt_uphill", s, t, uphill=0, stairs=10)
+            self.assertLessEqual(b.extra["stairs_m"], a.extra["stairs_m"] + 1e-9)
+            hit += 1
+        self.assertGreater(hit, 0)
 
 
 if __name__ == "__main__":

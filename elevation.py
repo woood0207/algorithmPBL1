@@ -9,6 +9,10 @@
 같은 도로라도 u→v는 오르막, v→u는 내리막이므로 정점 하나에 값을 주면 방향을 구분할 수 없다.
 λ = 1 m 오를 때 평지 몇 m 걷는 것과 같은지. 기본 8은 Naismith 규칙(600 m 오르기 ≈ 평지 5 km)에서 온 값.
 c' ≥ w 이므로 직선거리 휴리스틱은 그대로 하한이고, ALT 표는 c' 그래프에서 다시 계산해야 하한이 된다.
+
+계단 벌점: OSM highway=steps 간선은 거리에 s배를 곱한다 (s = 1이면 끔).
+  c'(u, v) = s · w(u, v) + λ · max(0, z(v) - z(u))
+90 m DEM은 계단 고도차를 거의 못 잡고(고도차 0으로 나오는 계단이 많다), 계단의 오르는 방향도 OSM에 없어서 양방향 모두에 준다.
 """
 import csv
 import json
@@ -69,24 +73,31 @@ def climb(graph, u, v):
     return z[v] - z[u]
 
 
-def uphill_graph(graph, lam):
-    """간선 비용을 w + λ·max(0, Δz)로 바꾼 그래프. 정점, 간선 번호, 좌표는 원래 그래프와 같다."""
+def is_stairs(graph, u, v):
+    return "steps" in graph.roads[graph.edge_id[(u, v)]].highway
+
+
+def uphill_graph(graph, lam, stairs=1.0):
+    """간선 비용을 s·w + λ·max(0, Δz)로 바꾼 그래프 (s는 계단에만). 정점, 간선 번호, 좌표는 원래 그래프와 같다."""
     if not graph.elevation:
         raise ValueError("고도 데이터가 없습니다. 먼저 `python main.py elevation`을 실행하세요.")
+    if stairs < 1:
+        raise ValueError("계단 배수는 1 이상이어야 합니다 (1 = 벌점 없음).")
     adj, radj = {u: {} for u in graph.adj}, {u: {} for u in graph.radj}
     for u, v, w in graph.edges():
-        c = w + lam * max(0.0, climb(graph, u, v))
+        c = (stairs if is_stairs(graph, u, v) else 1.0) * w + lam * max(0.0, climb(graph, u, v))
         adj[u][v] = c
         radj[v][u] = c
     return replace(graph, adj=adj, radj=radj)
 
 
 def path_profile(graph, path):
-    """경로의 도로 거리, 총 오르막, 총 내리막(m)."""
-    dist = up = down = 0.0
+    """경로의 도로 거리, 총 오르막, 총 내리막, 계단 거리(m)."""
+    dist = up = down = steps = 0.0
     for a, b in zip(path, path[1:]):
         dist += graph.adj[a][b]
+        steps += graph.adj[a][b] if is_stairs(graph, a, b) else 0.0
         dz = climb(graph, a, b)
         up += max(0.0, dz)
         down += max(0.0, -dz)
-    return dist, up, down
+    return dist, up, down, steps

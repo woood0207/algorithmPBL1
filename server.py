@@ -14,7 +14,7 @@ from search import ALGORITHMS, HEURISTICS, run_search
 from trace_io import trace_to_dict
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
-OPTION_KEYS = ("beam_width", "budget", "seed", "no_revisit", "waypoints", "drive_radius", "walk_kmh", "drive_kmh", "drive_rule", "uphill")
+OPTION_KEYS = ("beam_width", "budget", "seed", "no_revisit", "waypoints", "drive_radius", "walk_kmh", "drive_kmh", "drive_rule", "uphill", "stairs")
 
 
 class App:
@@ -75,7 +75,8 @@ class App:
             if panel["algorithm"] == "via":
                 kw = {"waypoints": options.get("waypoints", [])}
             elif panel["algorithm"] == "alt_uphill":
-                kw = {"uphill": panel.get("uphill", options.get("uphill", 8.0)), "landmarks": body.get("landmarks") or None}
+                kw = {"uphill": panel.get("uphill", options.get("uphill", 8.0)), "stairs": panel.get("stairs", options.get("stairs", 1.0)),
+                      "landmarks": body.get("landmarks") or None}
             elif panel["algorithm"] == "walk_drive_walk":
                 kw = {k: options[k] for k in ("drive_center", "drive_radius", "walk_kmh", "drive_kmh", "drive_rule") if k in options}
             else:

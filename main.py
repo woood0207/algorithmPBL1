@@ -12,7 +12,7 @@
   python main.py analyze --pairs 300 --bins 5
   python main.py build --center 36.01243647 129.32180209 --radius 1000
   python main.py elevation                        # 정점 고도를 받아 data/road_elevation.csv 저장
-  python main.py route --start 1 --end 100 --solver alt_uphill --uphill 8
+  python main.py route --start 1 --end 100 --solver alt_uphill --uphill 8 --stairs 3
   python main.py selftest
 """
 import argparse
@@ -128,7 +128,7 @@ def cmd_route(args):
     if args.solver == "via":
         options = dict(waypoints=args.waypoints or [])
     if args.solver == "alt_uphill":
-        options = dict(uphill=args.uphill, landmarks=args.landmarks)
+        options = dict(uphill=args.uphill, stairs=args.stairs, landmarks=args.landmarks)
     alt = make_alt(graph, args, args.heuristic in ("alt", "max"))
     trace = run_search(graph, args.solver, start["id"], end["id"], heuristic=args.heuristic, alt=alt, **options)
     if not trace.found:
@@ -152,8 +152,10 @@ def cmd_route(args):
     print(f"{trace.label}: {trace.cost:,.2f} {trace.cost_unit}, 도로 거리 {result['distance_m']:,.2f} m")
     if "climb_m" in trace.extra:
         x = trace.extra
-        result.update({k: x[k] for k in ("uphill_lambda", "climb_m", "descent_m", "shortest_distance_m", "shortest_climb_m")})
-        print(f"오르막 {x['climb_m']:.0f} m (최단 경로 {x['shortest_distance_m']:,.0f} m는 오르막 {x['shortest_climb_m']:.0f} m)")
+        result.update({k: x[k] for k in ("uphill_lambda", "stairs_factor", "climb_m", "descent_m", "stairs_m",
+                                         "shortest_distance_m", "shortest_climb_m", "shortest_stairs_m")})
+        print(f"오르막 {x['climb_m']:.0f} m, 계단 {x['stairs_m']:.0f} m "
+              f"(최단 경로 {x['shortest_distance_m']:,.0f} m는 오르막 {x['shortest_climb_m']:.0f} m, 계단 {x['shortest_stairs_m']:.0f} m)")
     for seg in result["route_segments"]:
         if "minutes" in seg:
             print(f"  {seg['kind']}: {seg['meters']:.1f} m, {seg['minutes']:.2f} 분")
@@ -337,6 +339,7 @@ def parse_args():
     p.add_argument("--serve", action="store_true")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--uphill", type=float, default=8.0, help="alt_uphill: 1 m 오르막 = 평지 몇 m (λ)")
+    p.add_argument("--stairs", type=float, default=1.0, help="alt_uphill: 계단 간선 거리 배수 (1 = 벌점 없음)")
     alt_options(p)
     drive_options(p)
     p.set_defaults(func=cmd_route)
