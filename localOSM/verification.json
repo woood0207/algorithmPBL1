@@ -1,0 +1,57 @@
+{
+  "backend": "python",
+  "algorithm": "dijkstra",
+  "third_party_packages_required": false,
+  "minimum_python": "3.10",
+  "unit_tests_passed": 7,
+  "independent_all_pairs_comparisons": 2500,
+  "real_graph_nodes": 242467,
+  "real_graph_directed_edges": 507702,
+  "browser_uses_python_api": true,
+  "browser_javascript_search_engine_loaded": false,
+  "browser_route_cases": {
+    "1": {
+      "distance_m": 1647.9857347282223,
+      "modes": [
+        "walk"
+      ]
+    },
+    "2": {
+      "distance_m": 2978.858968029316,
+      "modes": [
+        "bike"
+      ]
+    },
+    "4": {
+      "distance_m": 1882.9015624138883,
+      "modes": [
+        "drive"
+      ]
+    },
+    "7": {
+      "distance_m": 1492.0417360204044,
+      "modes": [
+        "walk",
+        "drive"
+      ]
+    }
+  },
+  "stale_response_after_clear_prevented": true,
+  "standalone_cli_verified": true,
+  "offline_except_loopback": true,
+  "name_policy": "Prefer supplied OSM English names; preserve original names when English is unavailable. No automatic romanization.",
+  "automatic_romanization": false,
+  "csv_graph_verification": {
+    "graph_format": "csv",
+    "nodes": 242467,
+    "directed_edges": 507702,
+    "exact_legacy_graph_match": true,
+    "api_route_distances_m": {
+      "1": 1647.9857347282223,
+      "2": 2978.858968029316,
+      "4": 1882.9015624138883,
+      "7": 1492.0417360204044
+    },
+    "unit_tests_passed": 7
+  }
+}
