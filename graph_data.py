@@ -11,6 +11,7 @@ import json
 import math
 import re
 import xml.etree.ElementTree as ET
+from typing import Dict, List, Tuple
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -26,6 +27,11 @@ def haversine(lat1, lon1, lat2, lon2):
     return 2 * EARTH_RADIUS_M * math.asin(min(1.0, math.sqrt(a)))
 
 
+class Vehicle:
+    WALK = "walk"
+    DRIVE = "drive"
+    BIKE = "bike"
+
 @dataclass
 class Road:
     """CSV 한 행. id는 0부터, CSV 행 번호(edge_row)는 id + 1이다."""
@@ -36,15 +42,21 @@ class Road:
     coords: list = field(default_factory=list)  # 지도용 도로 굴곡: [(위도, 경도), ...]
     name: str = ""
     highway: str = ""
+    permissions: Dict[Vehicle, bool] = field(default_factory=dict) # Dict instead of set to keep dataclass serializable
+    length: float | None = None                  # 실제 길이(m). CSV에 length_m이 없으면 w (예전 CSV는 w가 m)
 
+    def permits(self, vehicle: Vehicle):
+        if vehicle in self.permissions:
+            return self.permissions[vehicle]
+        return False
 
 @dataclass
 class Graph:
     coords: dict = field(default_factory=dict)    # id -> (lat, lon)
     adj: dict = field(default_factory=dict)       # id -> {neighbor: weight}
     radj: dict = field(default_factory=dict)      # 역방향 인접 리스트
-    edge_id: dict = field(default_factory=dict)   # (u, v) -> 가장 짧은 평행 간선의 Road.id
-    roads: list = field(default_factory=list)     # CSV 모든 행 (평행 간선, self-loop 포함)
+    edge_id: Dict[Tuple[int, int], int] = field(default_factory=dict)   # (u, v) -> 가장 짧은 평행 간선의 Road.id
+    roads: List[Road] = field(default_factory=list)     # CSV 모든 행 (평행 간선, self-loop 포함)
     alpha: float = 0.0                            # min(weight / 직선거리)
     center: tuple | None = None
     radius: float | None = None
@@ -148,7 +160,8 @@ def load_graph(nodes_csv, edges_csv, graphml=None):
             u, v, w = int(row["source"]), int(row["target"]), float(row["weight"])
             if u not in g.coords or v not in g.coords or not math.isfinite(w) or w < 0:
                 raise ValueError(f"잘못된 간선입니다: {u} -> {v}, weight={w}")
-            road = Road(len(g.roads), u, v, w, [g.coords[u], g.coords[v]])
+            road = Road(len(g.roads), u, v, w, [g.coords[u], g.coords[v]], permissions=_edge_permissions(row),
+                        length=float(row["length_m"]) if row.get("length_m") else w, highway=row.get("highway") or "")
             g.roads.append(road)
             if u == v:                 # 자기 자신으로 가는 간선: 최단경로에 의미 없음
                 n_self += 1
@@ -182,6 +195,7 @@ def load_graph(nodes_csv, edges_csv, graphml=None):
             g.network_type = meta.get("route_network_type")
         else:
             print("경고: GraphML과 CSV의 간선이 달라 도로 곡선을 쓰지 않습니다.")
+            _copy_stairs_by_coords(g, rows)
 
     if g.center is None:
         n = len(g.coords)
@@ -222,3 +236,40 @@ def _label_components(g):
         sizes[cid] = count
     main = max(sizes, key=sizes.get)
     g.main_nodes = [n for n in g.coords if g.component[n] == main]
+
+def _copy_stairs_by_coords(g, rows):
+    """GraphML이 다른 그래프용이어도, 양 끝 좌표가 같은 간선에는 계단(highway=steps) 표시를 옮긴다.
+    CSV에 highway 열이 생기면 필요 없다. GraphML이 덮는 범위 밖의 계단은 알 수 없다."""
+    key = lambda p: (round(p[0], 6), round(p[1], 6))
+    node_at = {key(c): n for n, c in g.coords.items()}
+    stairs = set()
+    for r in rows:
+        if "steps" in r[8]:
+            a, b = node_at.get(key(r[6][0])), node_at.get(key(r[6][-1]))
+            if a is not None and b is not None:
+                stairs |= {(a, b), (b, a)}
+    for road in g.roads:
+        if (road.u, road.v) in stairs and not road.highway:
+            road.highway = "steps"
+
+
+def _edge_permissions(edge: Dict[str, str | None]):
+    permissions = {}
+    match edge["road_use"]:
+        case "walk_only": 
+            permissions[Vehicle.WALK] = True
+            permissions[Vehicle.DRIVE] = False
+        case "drive_only": 
+            permissions[Vehicle.WALK] = False
+            permissions[Vehicle.DRIVE] = True
+        case "both": 
+            permissions[Vehicle.WALK] = True
+            permissions[Vehicle.DRIVE] = True
+    match edge["mode"]:
+        case "walk": 
+            permissions[Vehicle.WALK] = True
+        case "drive": 
+            permissions[Vehicle.DRIVE] = True
+        case "bike": 
+            permissions[Vehicle.BIKE] = True
+    return permissions

@@ -21,10 +21,10 @@ function loadWorld(meta) {
     const [wx, wy] = mercator(lat, lon);
     World.nodes.set(id, { id, lat, lon, wx, wy });
   }
-  World.roads = meta.roads.map(([id, u, v, w, name, highway, coords]) => {
+  World.roads = meta.roads.map(([id, u, v, w, name, highway, coords, length]) => {
     const pts = new Float64Array(coords.length * 2);
     coords.forEach(([lat, lon], i) => { const [x, y] = mercator(lat, lon); pts[2 * i] = x; pts[2 * i + 1] = y; });
-    return { id, u, v, w, name, highway, pts };
+    return { id, u, v, w, name, highway, pts, length: length ?? w };
   });
   World.edgeOf = new Map();
   for (const r of World.roads) {

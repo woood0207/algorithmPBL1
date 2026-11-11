@@ -109,9 +109,9 @@ class TestOthers(Base):
             self.assert_valid(r)
             self.assertIn(r.extra["via"], r.path)
 
-    def test_walk_drive_walk_never_slower_than_walking(self):
+    def test_vehicle_switch_never_slower_than_walking(self):
         for s, t in self.pairs[:30]:
-            r = run_search(self.g, "walk_drive_walk", s, t, drive_radius=500)
+            r = run_search(self.g, "vehicle_switch", s, t, drive_radius=500)
             d = distances(self.g, s)[t] / 1000 / 5 * 60
             self.assertLessEqual(r.cost, d + 1e-6)
             self.assert_valid(r)
@@ -122,7 +122,7 @@ class TestOthers(Base):
 
     def test_drive_only_inside_zone(self):
         s, t = self.g.default_endpoints()
-        r = run_search(self.g, "walk_drive_walk", s, t, drive_radius=400)
+        r = run_search(self.g, "vehicle_switch", s, t, drive_radius=400)
         zone = set(r.extra["drive_nodes"])
         for seg in r.segments:
             if seg["kind"] == "drive":
@@ -191,7 +191,8 @@ class TestUphill(Base):
     def test_stairs_penalty_avoids_stairs(self):
         """계단 배수를 키우면 경로의 계단 거리가 늘지 않는다."""
         hit = 0
-        for s, t in self.pairs:
+        stairs = [(r.u, r.v) for r in self.g.roads if "steps" in r.highway]   # 계단 양 끝을 출발·도착으로
+        for s, t in stairs + self.pairs:
             a = run_search(self.g, "alt_uphill", s, t, uphill=0, stairs=1)
             if not a.found or a.extra["stairs_m"] == 0:
                 continue

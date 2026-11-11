@@ -60,7 +60,7 @@ python main.py route --start 1 --end 100 --serve
 ```
 
 ```bash
-python main.py route --start-coord 36.0115136 129.331617 --end-coord 36.0078929 129.3287292 --solver walk_drive_walk --drive-radius 400
+python main.py route --start-coord 36.0115136 129.331617 --end-coord 36.0078929 129.3287292 --solver vehicle_switch --drive-radius 400
 ```
 
 ```bash
@@ -107,14 +107,16 @@ data/            road_route 그래프와 예전 830 그래프
 
 ## ALT 업힐 회피 (`alt_uphill`)
 
-오르막을 덜 타는 경로를 찾는 ALT입니다. 고도는 `data/road_elevation.csv`(정점별 고도, m)에 있고, 다른 지역으로 `build`한 뒤에는 `python main.py elevation`으로 다시 받습니다(Open-Meteo Elevation API, Copernicus DEM 90 m, 인터넷 필요).
+오르막을 덜 타는 경로를 찾는 ALT입니다. 고도는 `data/road_elevation.csv`(정점별 고도, m)에 있고, 정점이 바뀌면 `python main.py elevation`으로 다시 받습니다(Open-Meteo Elevation API, Copernicus DEM 90 m, 인터넷 필요). 무료 API 제한 때문에 8,697개에 10분 넘게 걸릴 수 있고, 끊기면 다시 실행하면 이어서 받습니다.
 
 - **간선 비용**: `c'(u, v) = 거리 + λ × max(0, 고도(v) − 고도(u))`. 같은 도로도 올라가는 방향만 비싸지므로 정점이 아니라 방향 있는 간선에 붙입니다. λ는 "1 m 오르는 것 = 평지 λ m"이고 기본 8은 Naismith 규칙(600 m 오르기 ≈ 평지 5 km)에서 왔습니다. λ를 키울수록 오르막을 더 피하고, λ = 0이면 보통 최단 경로입니다.
 - **계단 벌점**: OSM에서 계단(`highway=steps`)으로 표시된 간선 52개는 거리에 s배를 곱합니다(`--stairs`, 웹 "계단 배수", 1이면 끔). 90 m DEM은 계단의 고도차를 거의 못 잡고(고도차 0으로 나오는 계단이 많음), OSM에는 계단을 오르는 방향이 없어서 양방향 모두에 줍니다. 예: 413 → 75에서 λ=8만 주면 437 m 중 계단 197 m인 경로가 나오고(최단 경로보다 계단이 더 많음), 계단 ×3을 더하면 477 m 중 계단 56 m입니다.
 - **ALT**: 랜드마크 거리표를 c' 그래프에서 다시 계산해야 h가 c' 기준 하한이 됩니다. (λ, 랜드마크)별로 한 번 만들고 캐시합니다.
 - **웹**: 구성 불러오기 → "ALT · 업힐 회피 (λ = 8) · 계단 ×3 추가". 패널마다 λ와 계단 배수를 바꿀 수 있습니다. 지도의 주황 도로는 경사 3% 이상 구간(진할수록 가파름), 보라 점선은 계단이고, 결과 경로의 분홍은 오르막, 검정은 계단, 파랑은 평지·내리막입니다. 아래 상세에 오르막 총량과 "업힐 무시 최단 경로 대비 몇 m 덜 오르고 몇 m 더 걷는지"가 나옵니다.
-- **CLI**: `python main.py route --start 350 --end 561 --solver alt_uphill --uphill 8 --stairs 3`
-- **예시** (기본 출발 350 → 도착 561): 최단 3,599 m / 오르막 143 m → λ=8이면 3,658 m / 129 m, λ=30이면 3,699 m / 127 m.
+- **도보 간선, 실제 길이 기준**: `vehicle-switch` 이후 CSV weight는 이동 시간(초)이고 도보·차량·자전거 간선이 같이 들어 있습니다. 업힐 회피는 도보 가능 간선만 쓰고 `length_m`(m)으로 계산합니다.
+- **계단 표시**: 새 CSV에는 도로 종류가 없어서, 예전 캠퍼스 `roads.graphml`의 계단을 양 끝 좌표가 같은 간선에 옮깁니다. 그래서 캠퍼스 밖 계단은 모르고, 캠퍼스 안도 일부만 맞습니다(16개 간선). `road_route.py`가 `highway` 열을 같이 내보내면 그걸 바로 씁니다.
+- **CLI**: `python main.py route --start 8247 --end 7708 --solver alt_uphill --uphill 8 --stairs 3`
+- **예시** (8,697 정점 지도의 기본 출발 8247 → 도착 7708): 도보 최단 12,622 m / 오르막 208 m → λ=8이면 13,115 m / 98 m. (예전 746 정점 지도에서는 3,599 m / 143 m → 3,658 m / 129 m)
 - **더 나은 고도 자료**: 국토지리정보원 국토정보플랫폼(https://map.ngii.go.kr/pd/ctlsSvc/ctlsSvc.do) 지도자료 카탈로그의 "공개DEM"(로그인 필요). 지면 기준이라 건물·나무 높이가 섞인 Copernicus보다 정확할 것으로 보지만 아직 적용하지 않았습니다.
 - **한계**: 90 m 격자 DEM이라 짧은 간선의 고도차가 부정확합니다(경사 30% 넘는 간선이 1,888개 중 156개). 경로 전체 오르막 합계는 대략 맞지만 간선 하나하나의 경사는 믿기 어렵습니다.
 
@@ -138,6 +140,6 @@ register_algorithm("my_algo", "내 알고리즘", my_algo, uses_heuristic=True, 
 ## 검증
 
 - `python main.py selftest`: 정확 알고리즘과 Dijkstra 비교, Weighted A* 비용 상한, ALT 하한, 경유지, 도보-차량-도보, Trace 입출력 등 20개 (ALT 업힐 회피가 c' 그래프의 Dijkstra와 같은 비용인지 포함).
-- 팀원 원본 코드와 같은 입력으로 비교: `road_route` Dijkstra, `path_algorithms`의 정확·비정확 알고리즘, `shortest_via`, `min_walk_drive_walk`(`--drive-rule node`)에서 300개 쌍 기준 일치(위의 BFS 차이 제외).
+- 팀원 원본 코드와 같은 입력으로 비교: `road_route` Dijkstra, `path_algorithms`의 정확·비정확 알고리즘, `shortest_via`, `vehicle_switch`(`--drive-rule node`)에서 300개 쌍 기준 일치(위의 BFS 차이 제외).
 
 지도 데이터 © OpenStreetMap contributors (ODbL).

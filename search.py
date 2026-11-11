@@ -21,8 +21,9 @@ import random
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from typing import Dict, List
 
-from graph_data import haversine, load_graph
+from graph_data import Graph, Road, Vehicle, haversine, load_graph
 from trace_io import Step, Trace
 
 INF = float("inf")
@@ -34,10 +35,43 @@ HEURISTICS = {
     "zero": "h = 0",
 }
 
+@dataclass
+class VehicleState:
+    initial_state: str = "start"
+    vehicle: Dict[str, Vehicle] = field(default_factory={"start": Vehicle.WALK})
+    transitions: Dict[str, List[str]] = field(default_factory={"start": {}})
+
+    def __init__(self, initial_state: str = "start", initial_vehicle: Vehicle = Vehicle.WALK):
+        self.initial_state = initial_state
+        self.vehicle = {}
+        self.vehicle[initial_state] = initial_vehicle
+        self.transitions = {}
+        self.transitions[initial_state] = []
+
+    def from_list(vehicles: List[Vehicle]):
+        if len(vehicles) == 0:
+            raise ValueError("vehicle list cannot be empty")
+        if len(vehicles) == 1:
+            return VehicleState("0", vehicles[0])
+
+        vs = VehicleState("0", vehicles[0])
+        for i, v in enumerate(vehicles[1:], 1):
+            vs.insert_state(str(i), v)
+        for j in range(1, len(vehicles)):
+            vs.insert_transition(str(j-1), str(j))
+
+        return vs
+
+    def insert_state(self, name: str, vehicle: Vehicle):
+        self.vehicle[name] = vehicle
+        self.transitions[name] = [] 
+
+    def insert_transition(self, source: str, target: str):
+        self.transitions[source].append(target) 
 
 @dataclass
 class Context:
-    graph: object
+    graph: Graph
     start: int
     goal: int
     h: object                        # h(v): v에서 goal까지의 추정 비용
@@ -55,7 +89,7 @@ class Context:
     uphill: float = 8.0              # 업힐 회피 ALT: 1 m 오르막 = 평지 λ m
     landmarks: list | None = None    # 업힐 회피 ALT: 랜드마크 ID (없으면 farthest 4개)
     stairs: float = 1.0              # 업힐 회피 ALT: 계단 간선 거리 배수 (1 = 벌점 없음)
-
+    vehicle_state: VehicleState = field(default_factory=VehicleState)
 
 @dataclass
 class Algorithm:
@@ -362,53 +396,81 @@ def shortest_via(c):
 
 
 # ---------------------------------------------------------------- walk drive walk
-def drive_zone(graph, center, radius):
-    """center에서 radius(m) 안의 정점."""
-    return {n for n, (la, lo) in graph.coords.items() if haversine(la, lo, center[0], center[1]) < radius}
+# def drive_zone(roads: List[Road]):
+#     uniq = set()
+#     for r in filter(lambda r: r.permits(Vehicle.DRIVE), roads):
+#         uniq.add(r.u)
+#         uniq.add(r.v)
+#     return list(uniq)
+
+def vehicle_switch(c: Context):
+    c.vehicle_state = VehicleState.from_list([Vehicle.WALK, Vehicle.DRIVE, Vehicle.WALK])
+    
+    # Init
+    g = c.graph
+    vs = c.vehicle_state
+    minutes = lambda m, k: m#lambda meters, kmh: ((meters / 1000) / kmh) * 60
+    cost = {(c.start, vs.initial_state): 0.0}
+    prev = {(c.start, vs.initial_state): None}
 
 
-def walk_drive_walk(c):
-    """상태를 가진 Dijkstra. 비용은 이동 시간(분).
-    (v, 0): 아직 안 탐, (v, 1): 타고 있음, (v, 2): 내렸음
-      0 -> 0 도보, 0 -> 1 차량(간선이 drive일 때), 1 -> 1 차량, 1 -> 2 도보, 2 -> 2 도보
-    """
-    g, trace = c.graph, Trace(c.start, c.goal)
-    zone = drive_zone(g, c.drive_center or g.center, c.drive_radius)
-    minutes = lambda meters, kmh: meters / 1000 / kmh * 60
-    cost, prev = {(c.start, 0): 0.0}, {(c.start, 0): None}
-    heap = [(0.0, c.start, 0)]
-    trace.extra.update(drive_nodes=sorted(zone), drive_radius=c.drive_radius,
+    heap = [(0.0, c.start, vs.initial_state)]
+    speeds = {}
+    speeds[Vehicle.WALK] = c.walk_kmh
+    speeds[Vehicle.DRIVE] = c.drive_kmh
+
+    def push_road_maybe(prev, cost, heap, time, u, u_state, v, v_state, step):
+        if time < cost.get((u, u_state), INF):
+            cost[(u, u_state)] = time
+            prev[(u, u_state)] = (v, v_state)
+            heapq.heappush(heap, (time, u, u_state))
+            step.pushed.append(u)
+            step.pushed_edges.append(g.edge_id[(v, u)])
+
+
+
+    # Frontend
+    # zone = drive_zone(g.roads)
+    trace = Trace(c.start, c.goal)
+    trace.cost_unit = "min"
+    trace.extra.update(
+        #drive_nodes=sorted(zone), 
+        #drive_radius=c.drive_radius,
                        drive_center=list(c.drive_center or g.center), walk_kmh=c.walk_kmh, drive_kmh=c.drive_kmh,
                        drive_rule=c.drive_rule)
-    trace.cost_unit = "min"
+    
     end_state = None
     while heap:
-        d, v, s = heapq.heappop(heap)
-        if d != cost[(v, s)]:
+        time, v, v_state = heapq.heappop(heap)
+        if time > cost[(v, v_state)]:
             continue
-        before = prev[(v, s)]
-        step = Step(len(trace.steps), v, d, 0.0, d, before[0] if before else None, state=s)
+
+        before = prev[(v, v_state)]
+        step = Step(len(trace.steps), v, time, 0.0, time, before[0] if before else None, state=v_state)
         trace.steps.append(step)
+
         if v == c.goal:
-            end_state = s
+            end_state = v_state
             break
+
         for u, w in g.neighbors(v):
-            # edge: docstring과 지도 표시 기준. node: 원본 multi_method.py의 tags[u] 검사.
-            drivable = u in zone and (c.drive_rule == "node" or v in zone)
-            walk, drive = minutes(w, c.walk_kmh), minutes(w, c.drive_kmh)
-            moves = {0: [(0, walk)] + ([(1, drive)] if drivable else []),
-                     1: ([(1, drive)] if drivable else []) + [(2, walk)],
-                     2: [(2, walk)]}[s]
-            for ns, dt in moves:
-                if d + dt < cost.get((u, ns), INF):
-                    cost[(u, ns)], prev[(u, ns)] = d + dt, (v, s)
-                    heapq.heappush(heap, (d + dt, u, ns))
-                    step.pushed.append(u)
-                    step.pushed_edges.append(g.edge_id[(v, u)])
+            road = g.roads[g.edge_id[(v, u)]]
+
+            if road.permits(vs.vehicle[v_state]):
+                u_state = v_state
+                total_time = time + minutes(w, speeds[vs.vehicle[u_state]])
+                push_road_maybe(prev, cost, heap, total_time, u, u_state, v, v_state, step)
+
+            for u_state in vs.transitions[v_state]:
+                if road.permits(vs.vehicle[u_state]):
+                    total_time = time + minutes(w, speeds[vs.vehicle[u_state]])
+                    push_road_maybe(prev, cost, heap, total_time, u, u_state, v, v_state, step)
+
     if end_state is None:
         return _finish(trace, g, False, [], reason="unreachable")
 
-    states, key = [], (c.goal, end_state)
+    states = []
+    key = (c.goal, end_state)
     while key is not None:
         states.append(key)
         key = prev[key]
@@ -417,18 +479,21 @@ def walk_drive_walk(c):
     edge_ids = g.path_edges(path)
     _finish(trace, g, True, path, edge_ids, cost=cost[(c.goal, end_state)])
 
-    names = {0: "walk1", 1: "drive", 2: "walk2"}
+    names = {"0": "walk1", "1": "drive", "2": "walk2"}
     groups = []
-    for e, (_, s) in zip(edge_ids, states[1:]):
-        if not groups or groups[-1]["kind"] != names[s]:
-            groups.append(dict(kind=names[s], edge_ids=[], meters=0.0, minutes=0.0))
+    for e, (_, v_state) in zip(edge_ids, states[1:]):
+        if not groups or groups[-1]["kind"] != names[v_state]:
+            groups.append(dict(kind=names[v_state], edge_ids=[], meters=0.0, minutes=0.0))
         groups[-1]["edge_ids"].append(e)
         groups[-1]["meters"] += g.roads[e].w
-        groups[-1]["minutes"] += minutes(g.roads[e].w, c.drive_kmh if s == 1 else c.walk_kmh)
+        groups[-1]["minutes"] += minutes(g.roads[e].w, c.drive_kmh if v_state == 1 else c.walk_kmh)
     trace.segments = groups
     trace.extra["distance_m"] = sum(x["meters"] for x in groups)
     return trace
 
+def walk_drive_walk(c: Context):
+    c.vehicle_state = VehicleState.from_list([Vehicle.WALK, Vehicle.DRIVE, Vehicle.WALK])
+    vehicle_switch(c)
 
 # ---------------------------------------------------------------- 업힐 회피 ALT (pbl1/alt_visualizer 확장)
 _UPHILL_CACHE = {}
@@ -449,7 +514,7 @@ def _uphill_alt(graph, lam, stairs, landmarks):
 
 
 def alt_uphill(c):
-    """간선 비용 c'(u,v) = s·w + λ·max(0, z(v) - z(u)) 위에서 ALT A* (s는 계단 간선에만).
+    """도보 간선만, 비용 c'(u,v) = s·길이(m) + λ·max(0, z(v) - z(u)) 위에서 ALT A* (s는 계단 간선에만).
     ALT 표도 c' 그래프에서 계산하므로 h는 c' 기준 하한이고, 찾은 경로는 c' 최소다."""
     from elevation import UPHILL_MIN_M, climb, is_stairs, path_profile
 
@@ -461,20 +526,21 @@ def alt_uphill(c):
     if not trace.found:
         return trace
 
-    dist, up, down, steps = path_profile(g, trace.path)
-    plain = weighted_astar(g, c.start, c.goal, 0, lambda v: 0.0).path   # 업힐 무시한 최단 경로 (비교용)
-    p_dist, p_up, _, p_steps = path_profile(g, plain)
+    dist, up, down, steps = path_profile(pg, trace.path)
+    flat = _uphill_alt(g, 0.0, 1.0, c.landmarks)[0]                     # 업힐·계단 무시한 도보 최단 경로 (비교용)
+    plain = weighted_astar(flat, c.start, c.goal, 0, lambda v: 0.0).path
+    p_dist, p_up, _, p_steps = path_profile(flat, plain)
     trace.extra.update(distance_m=dist, climb_m=up, descent_m=down, stairs_m=steps,
                        shortest_distance_m=p_dist, shortest_climb_m=p_up, shortest_stairs_m=p_steps)
 
     groups = []
     for e, a, b in zip(trace.edge_ids, trace.path, trace.path[1:]):
         dz = climb(g, a, b)
-        kind = "stairs" if is_stairs(g, a, b) else "uphill" if dz >= UPHILL_MIN_M else "flat"
+        kind = "stairs" if is_stairs(pg, a, b) else "uphill" if dz >= UPHILL_MIN_M else "flat"
         if not groups or groups[-1]["kind"] != kind:
             groups.append(dict(kind=kind, edge_ids=[], meters=0.0, climb=0.0))
         groups[-1]["edge_ids"].append(e)
-        groups[-1]["meters"] += g.adj[a][b]
+        groups[-1]["meters"] += g.roads[e].length if g.roads[e].length is not None else g.roads[e].w
         groups[-1]["climb"] += max(0.0, dz)
     trace.segments = groups
     return trace
@@ -501,7 +567,7 @@ register_algorithm("random", "Random Walk", lambda c: _walk(c, True),
                    hint="시드가 고정된 무작위 이동 · 예산 내 성공 보장 없음", default_heuristic="zero")
 register_algorithm("via", "경유지 Dijkstra", shortest_via, comparable=False, default_heuristic="zero",
                    hint="출발·도착에서 Dijkstra 2회 · 후보 중 총거리 최소인 경유지 선택")
-register_algorithm("walk_drive_walk", "도보-차량-도보", walk_drive_walk, comparable=False, default_heuristic="zero",
+register_algorithm("vehicle_switch", "도보-차량-도보", vehicle_switch, comparable=False, default_heuristic="zero",
                    hint="상태 3개짜리 Dijkstra · 이동 시간(분) 최소")
 register_algorithm("alt_uphill", "ALT 업힐 회피", alt_uphill, comparable=False, default_heuristic="zero",
                    hint="간선 비용 = 거리(계단은 ×s) + λ × 오르막(m) · ALT 표도 이 비용으로 계산 · 지도: 주황=경사 3%↑ 도로, 보라 점선=계단, 경로 분홍=오르막 검정=계단 파랑=평지·내리막")

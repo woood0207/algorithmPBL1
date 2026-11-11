@@ -31,7 +31,7 @@ class App:
         return dict(
             dataset=self.dataset, stats=g.stats, center=g.center, radius=g.radius, network_type=g.network_type,
             nodes=[[n, *c] for n, c in g.coords.items()],
-            roads=[[r.id, r.u, r.v, r.w, r.name, r.highway, r.coords] for r in g.roads],
+            roads=[[r.id, r.u, r.v, r.w, r.name, r.highway, r.coords, r.length] for r in g.roads],
             elevation=g.elevation or None,
             main_nodes=g.main_nodes, default_start=start, default_goal=goal,
             algorithms=[dict(id=a.id, label=a.label, uses_heuristic=a.uses_heuristic, hint=a.hint,
@@ -77,7 +77,7 @@ class App:
             elif panel["algorithm"] == "alt_uphill":
                 kw = {"uphill": panel.get("uphill", options.get("uphill", 8.0)), "stairs": panel.get("stairs", options.get("stairs", 1.0)),
                       "landmarks": body.get("landmarks") or None}
-            elif panel["algorithm"] == "walk_drive_walk":
+            elif panel["algorithm"] == "vehicle_switch":
                 kw = {k: options[k] for k in ("drive_center", "drive_radius", "walk_kmh", "drive_kmh", "drive_rule") if k in options}
             else:
                 kw = {k: options[k] for k in ("beam_width", "budget", "seed", "no_revisit") if k in options}

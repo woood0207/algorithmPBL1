@@ -6,7 +6,7 @@
   python main.py compare --algos dijkstra astar greedy --heuristic alt
   python main.py compare --viz-only               # 저장된 traces/*.json 만으로 다시 그리기
   python main.py route --start 1 --end 100        # road_route처럼 경로 JSON과 지도 HTML
-  python main.py route --start-coord 36.01 129.33 --end-coord 36.00 129.32 --solver walk_drive_walk
+  python main.py route --start-coord 36.01 129.33 --end-coord 36.00 129.32 --solver vehicle_switch
   python main.py via --start 1 --end 500 --waypoints 100 250 320
   python main.py benchmark --start 1 --goal 60 --repeats 5
   python main.py analyze --pairs 300 --bins 5
@@ -94,10 +94,10 @@ def cmd_compare(args):
         options = dict(beam_width=args.beam_width, budget=args.budget, seed=args.seed, no_revisit=args.no_revisit)
         traces = []
         for i, (algorithm, weight) in enumerate(panels):
-            kw = options if algorithm not in ("via", "walk_drive_walk", "dijkstra", "astar", "weighted") else {}
+            kw = options if algorithm not in ("via", "vehicle_switch", "dijkstra", "astar", "weighted") else {}
             if algorithm == "via":
                 kw = dict(waypoints=args.waypoints or [])
-            if algorithm == "walk_drive_walk":
+            if algorithm == "vehicle_switch":
                 kw = dict(drive_radius=args.drive_radius, walk_kmh=args.walk_kmh, drive_kmh=args.drive_kmh)
             trace = run_search(graph, algorithm, start, goal, heuristic=args.heuristic, weight=weight, alt=alt, **kw)
             name = f"trace_w{weight:g}.json" if weight is not None else f"trace_{i}_{algorithm}.json"
@@ -120,7 +120,7 @@ def cmd_route(args):
     start = select_endpoint(graph.coords, args.start, args.start_coord, "출발", args.max_snap)
     end = select_endpoint(graph.coords, args.end, args.end_coord, "도착", args.max_snap)
     options = {}
-    if args.solver == "walk_drive_walk":
+    if args.solver == "vehicle_switch":
         options = dict(drive_radius=args.drive_radius, walk_kmh=args.walk_kmh, drive_kmh=args.drive_kmh,
                        drive_rule=args.drive_rule)
         if args.drive_center:

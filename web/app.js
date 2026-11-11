@@ -19,7 +19,7 @@ const PRESETS = {
   alt: () => [{ algorithm: 'dijkstra' }, { algorithm: 'astar', heuristic: 'haversine' }, { algorithm: 'astar', heuristic: 'alt' }],
   greedy: () => ['greedy', 'beam', 'local', 'random'].map(a => ({ algorithm: a, heuristic: 'geo' })),
   bfs: () => [{ algorithm: 'bfs' }, { algorithm: 'bidirectional' }],
-  wdw: () => [{ algorithm: 'walk_drive_walk' }],
+  wdw: () => [{ algorithm: 'vehicle_switch' }],
   via: () => [{ algorithm: 'via' }],
   uphill: () => [{ algorithm: 'astar', heuristic: 'alt' }, { algorithm: 'alt_uphill', uphill: 8 }, { algorithm: 'alt_uphill', uphill: 8, stairs: 3 }],
 };
@@ -129,8 +129,8 @@ function drawSteepRoads(v, b) {
   if (!z) return;
   b.save(); b.lineWidth = 3;
   for (const r of World.roads) {
-    if (r.u >= r.v || r.w <= 0) continue;
-    const grade = Math.abs(z[r.v] - z[r.u]) / r.w;
+    if (r.u >= r.v || r.length <= 0) continue;
+    const grade = Math.abs(z[r.v] - z[r.u]) / r.length;
     if (grade < 0.03) continue;
     b.strokeStyle = `rgba(232,89,12,${Math.min(0.85, 0.15 + grade * 2.5).toFixed(2)})`;
     b.beginPath(); v.tracePts(b, r); b.stroke();
@@ -142,7 +142,7 @@ function drawSteepRoads(v, b) {
 }
 function drawZoneRoads(v, b, tr) {
   if (tr.algorithm === 'alt_uphill') return drawSteepRoads(v, b);
-  if (tr.algorithm !== 'walk_drive_walk') return;
+  if (tr.algorithm !== 'vehicle_switch') return;
   const zone = zoneNodes();
   b.save(); b.strokeStyle = '#0a35f3'; b.globalAlpha = 0.45; b.lineWidth = 2.5; b.beginPath();
   for (const r of World.roads) if (r.u < r.v && zone.has(r.u) && zone.has(r.v)) v.tracePts(b, r);
@@ -405,7 +405,7 @@ function panelRows() {
     box.append(row);
   });
   $('algoHint').textContent = [...new Set(S.panels.map(p => algo(p.algorithm).hint))].join(' / ');
-  const via = S.panels.some(p => p.algorithm === 'via'), wdw = S.panels.some(p => p.algorithm === 'walk_drive_walk');
+  const via = S.panels.some(p => p.algorithm === 'via'), wdw = S.panels.some(p => p.algorithm === 'vehicle_switch');
   document.querySelectorAll('.needs-via').forEach(e => { e.hidden = !via; });
   document.querySelectorAll('.needs-wdw').forEach(e => { e.hidden = !wdw; });
   if ((S.mode === 'w' && !via) || (S.mode === 'z' && !wdw)) setMode('s');
@@ -424,7 +424,7 @@ function panelTable() {
 function detailBlock() {
   let h = '';
   for (const t of S.traces) {
-    if (t.algorithm === 'walk_drive_walk' && t.found) {
+    if (t.algorithm === 'vehicle_switch' && t.found) {
       h += `<p><b>${t.label}</b> 총 ${fmt(t.cost, 2)}분 · 도로 ${fmt(t.extra.distance_m)} m · 차량 구역 정점 ${t.extra.drive_nodes.length}개<br>` + t.segments.map(s => `${SEGMENT_NAME[s.kind]} ${fmt(s.meters)} m, ${fmt(s.minutes, 2)}분`).join(' → ') + '</p>';
     }
     if (t.algorithm === 'alt_uphill' && t.found) {
