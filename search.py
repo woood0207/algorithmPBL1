@@ -432,7 +432,7 @@ def vehicle_switch(c: Context):
     # Frontend
     # zone = drive_zone(g.roads)
     trace = Trace(c.start, c.goal)
-    trace.cost_unit = "min"
+    trace.cost_unit = g.weight_unit   # 비용은 간선 weight의 합 (minutes 변환이 꺼져 있음)
     trace.extra.update(
         #drive_nodes=sorted(zone), 
         #drive_radius=c.drive_radius,
@@ -485,8 +485,10 @@ def vehicle_switch(c: Context):
         if not groups or groups[-1]["kind"] != names[v_state]:
             groups.append(dict(kind=names[v_state], edge_ids=[], meters=0.0, minutes=0.0))
         groups[-1]["edge_ids"].append(e)
-        groups[-1]["meters"] += g.roads[e].w
-        groups[-1]["minutes"] += minutes(g.roads[e].w, c.drive_kmh if v_state == 1 else c.walk_kmh)
+        r = g.roads[e]
+        groups[-1]["meters"] += r.length if r.length is not None else r.w     # weight가 초여도 거리는 m로
+        groups[-1]["minutes"] += (r.w / 60 if g.weight_unit == "s"
+                                  else r.w / 1000 / (c.drive_kmh if v_state == "1" else c.walk_kmh) * 60)
     trace.segments = groups
     trace.extra["distance_m"] = sum(x["meters"] for x in groups)
     return trace
@@ -522,6 +524,8 @@ def alt_uphill(c):
     pg, alt = _uphill_alt(g, lam, stairs, c.landmarks)
     trace = weighted_astar(pg, c.start, c.goal, 1, alt.heuristic(c.goal))
     trace.cost_unit = "m 환산"
+    trace.extra["basis"] = (f"도보 간선만 · 길이(m)" + (f" × 계단 {stairs:g}배" if stairs != 1 else "")
+                            + f" + {lam:g} × 오르막(m) · ALT 표도 이 비용으로 계산")
     trace.extra.update(uphill_lambda=lam, stairs_factor=stairs, landmarks=alt.landmarks, uphill_prep_ms=alt.prep_ms)
     if not trace.found:
         return trace
@@ -617,6 +621,9 @@ def run_search(graph, algorithm, start, goal, heuristic=None, weight=None, alt=N
     trace.heuristic = name if spec.uses_heuristic else None
     trace.weight = weight if spec.default_weight is not None else None
     trace.label = make_label(spec, name, weight)
+    if trace.cost_unit == "m" and algorithm != "alt_uphill":
+        trace.cost_unit = graph.weight_unit          # 대부분의 알고리즘 비용 = weight 합
+    trace.extra.setdefault("basis", graph.basis)
     if algorithm == "alt_uphill":
         x = trace.extra
         trace.label += f" (λ={x['uphill_lambda']:g}" + (f", 계단×{x['stairs_factor']:g})" if x["stairs_factor"] != 1 else ")")

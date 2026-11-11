@@ -65,6 +65,16 @@ class Graph:
     main_nodes: list = field(default_factory=list)  # 가장 큰 약연결 성분
     component: dict = field(default_factory=dict)
     elevation: dict = field(default_factory=dict)   # id -> 고도(m), road_elevation.csv가 있을 때만
+    weight_unit: str = "m"                        # CSV weight 단위: m(도로 길이) 또는 s(이동 시간)
+    max_speed: float = 1.0                        # weight_unit이 s일 때 직선거리(m)를 시간(s)으로 바꾸는 최고 속도(m/s)
+
+    @property
+    def basis(self):
+        """간선 비용이 무엇인지 한 줄 설명."""
+        if self.weight_unit == "s":
+            return (f"이동 시간(초). 같은 두 정점 사이에 수단(도보·자전거·차량) 간선이 여럿이면 가장 빠른 것 "
+                    f"· 직선거리 h = 직선거리 ÷ 최고 {self.max_speed * 3.6:.0f} km/h")
+        return "도로 길이(m) · 직선거리 h = 직선거리"
 
     def neighbors(self, u):
         return self.adj.get(u, {}).items()
@@ -72,14 +82,20 @@ class Graph:
     def reverse_neighbors(self, u):
         return self.radj.get(u, {}).items()
 
-    def heuristic(self, u, goal):
+    def straight(self, u, goal):
+        """두 정점 사이 직선거리(m)."""
         la1, lo1 = self.coords[u]
         la2, lo2 = self.coords[goal]
         return haversine(la1, lo1, la2, lo2)
 
+    def heuristic(self, u, goal):
+        """직선거리 휴리스틱을 weight와 같은 단위로. s면 최고 속도로 나눈 시간이라 하한이 유지된다."""
+        d = self.straight(u, goal)
+        return d / self.max_speed if self.weight_unit == "s" else d
+
     def geographic(self, u, goal):
         """직선거리 × alpha. 가중치 단위가 거리가 아니어도 하한이 유지된다."""
-        return self.alpha * self.heuristic(u, goal)
+        return self.alpha * self.straight(u, goal)
 
     def edges(self):
         for u, nbrs in self.adj.items():
@@ -154,21 +170,24 @@ def load_graph(nodes_csv, edges_csv, graphml=None):
             g.adj.setdefault(nid, {})
             g.radj.setdefault(nid, {})
 
-    n_self, n_dup, ratios = 0, 0, []
+    n_self, n_dup, ratios, units, speeds = 0, 0, [], set(), [1e-9]
     with open(edges_csv, newline="", encoding="utf-8-sig") as f:
         for row in csv.DictReader(f):
             u, v, w = int(row["source"]), int(row["target"]), float(row["weight"])
             if u not in g.coords or v not in g.coords or not math.isfinite(w) or w < 0:
                 raise ValueError(f"잘못된 간선입니다: {u} -> {v}, weight={w}")
+            units.add(row.get("weight_unit") or "m")
             road = Road(len(g.roads), u, v, w, [g.coords[u], g.coords[v]], permissions=_edge_permissions(row),
                         length=float(row["length_m"]) if row.get("length_m") else w, highway=row.get("highway") or "")
             g.roads.append(road)
             if u == v:                 # 자기 자신으로 가는 간선: 최단경로에 의미 없음
                 n_self += 1
                 continue
-            d = g.heuristic(u, v)
+            d = g.straight(u, v)
             if d > 0:
                 ratios.append(w / d)
+            if w > 0:   # 실제로 낼 수 있는 속도의 최댓값 (길이와 직선거리 중 큰 쪽으로 계산해 하한을 보장)
+                speeds.append(max(road.length, d) / w)
             if v in g.adj[u]:          # 같은 두 노드 사이 여러 간선: 가장 짧은 것만 탐색에 사용
                 n_dup += 1
                 if w >= g.adj[u][v]:
@@ -177,6 +196,10 @@ def load_graph(nodes_csv, edges_csv, graphml=None):
             g.radj[v][u] = w
             g.edge_id[(u, v)] = road.id
     g.alpha = min(ratios, default=0.0)
+    if len(units) > 1 or not units <= {"m", "s"}:
+        raise ValueError(f"weight_unit이 한 가지(m 또는 s)여야 합니다: {sorted(units)}")
+    g.weight_unit = units.pop() if units else "m"
+    g.max_speed = max(speeds)
 
     curved = 0
     if graphml:
@@ -216,7 +239,9 @@ def load_graph(nodes_csv, edges_csv, graphml=None):
                "weak_components": len(set(g.component.values())),
                "main_component": len(g.main_nodes),
                "alpha": g.alpha,
-               "has_elevation": bool(g.elevation)}
+               "has_elevation": bool(g.elevation),
+               "weight_unit": g.weight_unit,
+               "max_speed_kmh": g.max_speed * 3.6 if g.weight_unit == "s" else None}
     return g
 
 
@@ -255,7 +280,7 @@ def _copy_stairs_by_coords(g, rows):
 
 def _edge_permissions(edge: Dict[str, str | None]):
     permissions = {}
-    match edge["road_use"]:
+    match edge.get("road_use"):          # 예전 CSV(수단 열 없음)는 빈 dict -> 모든 간선을 도보로 본다
         case "walk_only": 
             permissions[Vehicle.WALK] = True
             permissions[Vehicle.DRIVE] = False
@@ -265,7 +290,7 @@ def _edge_permissions(edge: Dict[str, str | None]):
         case "both": 
             permissions[Vehicle.WALK] = True
             permissions[Vehicle.DRIVE] = True
-    match edge["mode"]:
+    match edge.get("mode"):
         case "walk": 
             permissions[Vehicle.WALK] = True
         case "drive": 

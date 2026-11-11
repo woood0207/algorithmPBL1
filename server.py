@@ -32,7 +32,7 @@ class App:
             dataset=self.dataset, stats=g.stats, center=g.center, radius=g.radius, network_type=g.network_type,
             nodes=[[n, *c] for n, c in g.coords.items()],
             roads=[[r.id, r.u, r.v, r.w, r.name, r.highway, r.coords, r.length] for r in g.roads],
-            elevation=g.elevation or None,
+            elevation=g.elevation or None, weight_unit=g.weight_unit, basis=g.basis,
             main_nodes=g.main_nodes, default_start=start, default_goal=goal,
             algorithms=[dict(id=a.id, label=a.label, uses_heuristic=a.uses_heuristic, hint=a.hint,
                              default_heuristic=a.default_heuristic, default_weight=a.default_weight,
@@ -93,7 +93,7 @@ class App:
         start, goal = int(body["start"]), int(body["goal"])
         results = compare_all(self.graph, start, goal, alt, repeats=int(body.get("repeats", 3)), **options)
         return dict(start=start, goal=goal, config=options, landmarks=alt.landmarks, alt_prep_ms=alt.prep_ms,
-                    heuristic_scale=self.graph.alpha, weight_unit="m",
+                    heuristic_scale=self.graph.alpha, weight_unit=self.graph.weight_unit, basis=self.graph.basis,
                     note="Median of repeated runs after one warm-up, including Trace creation; excludes ALT preprocessing.",
                     results=results)
 
@@ -104,7 +104,7 @@ class App:
         out = {}
         for n in g.coords:
             h, li = alt.bound(n, goal)
-            out[n] = dict(true=true.get(n), alt=h, li=li, hav=g.heuristic(n, goal))
+            out[n] = dict(true=true.get(n), alt=h, li=li, hav=g.heuristic(n, goal), geo=g.geographic(n, goal))
         return dict(goal=goal, alpha=g.alpha, table=out)
 
     def start_analysis(self, body):

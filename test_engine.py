@@ -31,13 +31,28 @@ class Base(unittest.TestCase):
 
 class TestGraph(Base):
     def test_load(self):
-        self.assertEqual(self.g.stats["nodes"], 746)
-        self.assertEqual(self.g.stats["csv_rows"], 1976)
-        self.assertGreater(self.g.stats["curved_roads"], 900)
-        self.assertEqual(self.g.network_type, "walk")
+        self.assertEqual(self.g.stats["nodes"], 8697)
+        self.assertEqual(self.g.stats["csv_rows"], 50873)
+        self.assertEqual(self.g.weight_unit, "s")        # vehicle-switch 데이터: weight = 이동 시간(초)
+        self.assertTrue(self.g.elevation)
 
     def test_haversine_admissible(self):
-        self.assertGreaterEqual(self.g.alpha, 1.0)
+        """직선거리 휴리스틱은 weight 단위(m 또는 s)로 바뀌어 모든 간선에서 weight 이하여야 한다."""
+        for u, v, w in self.g.edges():
+            self.assertLessEqual(self.g.heuristic(u, v), w + 1e-9)
+            self.assertLessEqual(self.g.geographic(u, v), w + 1e-9)
+
+    def test_legacy_csv_still_loads(self):
+        """수단·단위 열이 없는 예전 830 정점 CSV도 읽혀야 한다 (m 단위)."""
+        g = load_graph(DATA / "legacy_830" / "road_nodes_numbered.csv", DATA / "legacy_830" / "road_edges_numbered.csv")
+        self.assertEqual(g.weight_unit, "m")
+        s, t = g.default_endpoints()
+        self.assertAlmostEqual(run_search(g, "astar", s, t).cost, run_search(g, "dijkstra", s, t).cost, places=6)
+
+    def test_cost_unit_follows_weight(self):
+        s, t = self.g.default_endpoints()
+        self.assertEqual(run_search(self.g, "dijkstra", s, t).cost_unit, "s")
+        self.assertEqual(run_search(self.g, "alt_uphill", s, t).cost_unit, "m 환산")
 
 
 class TestExact(Base):
@@ -110,15 +125,20 @@ class TestOthers(Base):
             self.assertIn(r.extra["via"], r.path)
 
     def test_vehicle_switch_never_slower_than_walking(self):
+        from elevation import uphill_graph
+        walk_graph = uphill_graph(self.g, 0.0)
         for s, t in self.pairs[:30]:
             r = run_search(self.g, "vehicle_switch", s, t, drive_radius=500)
-            d = distances(self.g, s)[t] / 1000 / 5 * 60
+            walk_m = distances(walk_graph, s).get(t)               # 도보 간선만, 길이(m)
+            if walk_m is None:
+                continue
+            d = walk_m / (5 / 3.6)                                  # 5 km/h로 걸은 시간(초) = weight 단위
             self.assertLessEqual(r.cost, d + 1e-6)
             self.assert_valid(r)
             kinds = [x["kind"] for x in r.segments]
             self.assertEqual(kinds, sorted(kinds, key=["walk1", "drive", "walk2"].index))
             self.assertEqual(kinds.count("drive"), min(1, kinds.count("drive")))
-            self.assertAlmostEqual(sum(x["minutes"] for x in r.segments), r.cost, places=6)
+            self.assertAlmostEqual(sum(x["minutes"] for x in r.segments) * 60, r.cost, places=6)   # 비용 단위는 초
 
     def test_drive_only_inside_zone(self):
         s, t = self.g.default_endpoints()

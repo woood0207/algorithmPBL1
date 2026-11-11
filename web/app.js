@@ -13,6 +13,8 @@ const VIRIDIS = Array.from({ length: 128 }, (_, i) => {
 });
 const SEGMENT = { walk1: '#d62728', drive: '#0a35f3', walk2: '#d62728', to_via: '#1f77b4', from_via: '#d62728', uphill: '#d6336c', flat: '#1971c2', stairs: '#212529' };
 const SEGMENT_NAME = { walk1: '도보', drive: '차량', walk2: '도보', to_via: '출발 → 경유', from_via: '경유 → 도착', uphill: '오르막', flat: '평지·내리막', stairs: '계단' };
+const UNIT = { s: '초', min: '분' };
+const unitName = u => UNIT[u || 'm'] || u || 'm';
 const FAIL = { budget: '예산 내 미도달', beam_exhausted: '후보 소진', dead_end: '이동 불가', unreachable: '도달 불가능' };
 const PRESETS = {
   weights: () => [0, 1, 3].map(w => ({ algorithm: 'weighted', heuristic: 'haversine', weight: w })),
@@ -119,7 +121,7 @@ function edgeBetween(a, b) {
 function hOf(tr, id) {
   const row = S.hTable && S.hTable.table[id];
   if (!row) return null;
-  const name = tr.heuristic && tr.heuristic !== 'zero' ? tr.heuristic : 'alt', geo = S.hTable.alpha * row.hav;
+  const name = tr.heuristic && tr.heuristic !== 'zero' ? tr.heuristic : 'alt', geo = row.geo ?? S.hTable.alpha * row.hav;
   return name === 'haversine' ? row.hav : name === 'geo' ? geo : name === 'max' ? Math.max(geo, row.alt) : row.alt;
 }
 
@@ -252,7 +254,7 @@ function drawTrace(v, c, tr) {
 
   const entry = S.views.find(x => x.trace === tr);
   if (entry) {
-    const unit = tr.cost_unit || 'm', cur = f.done[f.n - 1];
+    const unit = unitName(tr.cost_unit), cur = f.done[f.n - 1];
     const state = f.finished ? (tr.found ? `cost ${fmt(tr.cost)} ${unit}` : (FAIL[tr.reason] || '실패')) : cur ? `g=${cur.g.toFixed(0)} f=${cur.f.toFixed(0)}` : '대기';
     entry.line.textContent = `expanded ${f.n}/${tr.steps.length} | ${state} | events ${f.events}`;
   }
@@ -337,7 +339,7 @@ function onHover(v, x, y, e, tr) {
   if (row) {
     html += `실제 d(v,t)  ${row.true == null ? '∞' : row.true.toFixed(1) + ' m'}<br>h ALT        ${row.alt.toFixed(1)} m${row.li >= 0 ? ' (L' + (row.li + 1) + ')' : ''}<br>h 직선       ${row.hav.toFixed(1)} m<br>`;
   }
-  html += `g 현재 패널  ${rec ? rec.s.g.toFixed(1) + ' ' + (tr.cost_unit || 'm') : '—'}`;
+  html += `g 현재 패널  ${rec ? rec.s.g.toFixed(1) + ' ' + unitName(tr.cost_unit) : '—'}`;
   tip.innerHTML = html.replace(/ {2,}/g, m => '&nbsp;'.repeat(m.length));
   tip.hidden = false;
   const w = tip.offsetWidth, h = tip.offsetHeight;
@@ -417,15 +419,15 @@ function panelTable() {
   const unitOf = t => (t.cost_unit || 'm') + (t.extra && t.extra.uphill_lambda != null ? '@' + t.extra.uphill_lambda + '/' + t.extra.stairs_factor : '');  // λ가 다르면 비용 함수가 달라 비교하지 않음
   const bestOf = t => { const c = S.traces.filter(x => x.found && x.cost != null && unitOf(x) === unitOf(t)).map(x => x.cost); return c.length ? Math.min(...c) : null; };
   const mx = Math.max(1, ...S.traces.map(t => t.steps.length));
-  let h = '<tr><th>패널</th><th>확장</th><th>비용</th><th>비용/최소</th><th>경로 정점</th><th>시간(ms)</th><th>상태</th></tr>';
-  for (const t of S.traces) h += `<tr><td>${t.label}<div class="mini"><i style="width:${(100 * t.steps.length / mx).toFixed(1)}%"></i></div></td><td>${t.steps.length}</td><td>${t.found ? fmt(t.cost) + ' ' + (t.cost_unit || 'm') : '—'}</td><td>${t.found && bestOf(t) ? (t.cost / bestOf(t)).toFixed(4) : '—'}</td><td>${t.path.length}</td><td>${fmt(t.elapsed_ms, 2)}</td><td>${t.found ? '성공' : (FAIL[t.reason] || '실패')}</td></tr>`;
+  let h = '<tr><th>패널</th><th>확장</th><th>비용</th><th>비용/최소</th><th>경로 정점</th><th>시간(ms)</th><th>상태</th><th>비용 기준</th></tr>';
+  for (const t of S.traces) h += `<tr><td>${t.label}<div class="mini"><i style="width:${(100 * t.steps.length / mx).toFixed(1)}%"></i></div></td><td>${t.steps.length}</td><td>${t.found ? fmt(t.cost) + ' ' + unitName(t.cost_unit) : '—'}</td><td>${t.found && bestOf(t) ? (t.cost / bestOf(t)).toFixed(4) : '—'}</td><td>${t.path.length}</td><td>${fmt(t.elapsed_ms, 2)}</td><td>${t.found ? '성공' : (FAIL[t.reason] || '실패')}</td><td class="hint">${(t.extra && t.extra.basis) || ''}</td></tr>`;
   $('panelTable').innerHTML = h;
 }
 function detailBlock() {
   let h = '';
   for (const t of S.traces) {
     if (t.algorithm === 'vehicle_switch' && t.found) {
-      h += `<p><b>${t.label}</b> 총 ${fmt(t.cost, 2)}분 · 도로 ${fmt(t.extra.distance_m)} m · 차량 구역 정점 ${t.extra.drive_nodes.length}개<br>` + t.segments.map(s => `${SEGMENT_NAME[s.kind]} ${fmt(s.meters)} m, ${fmt(s.minutes, 2)}분`).join(' → ') + '</p>';
+      h += `<p><b>${t.label}</b> 총 ${fmt(t.cost, 2)} ${unitName(t.cost_unit)} · 도로 ${fmt(t.extra.distance_m)} m` + (t.extra.drive_nodes ? ` · 차량 구역 정점 ${t.extra.drive_nodes.length}개` : '') + '<br>' + t.segments.map(s => `${SEGMENT_NAME[s.kind]} ${fmt(s.meters)} m, ${fmt(s.minutes, 2)}분`).join(' → ') + '</p>';
     }
     if (t.algorithm === 'alt_uphill' && t.found) {
       const x = t.extra;
@@ -446,7 +448,7 @@ function detailBlock() {
 function compareTable() {
   if (!S.compare) { $('compareTable').innerHTML = ''; return; }
   const c = S.compare, mx = Math.max(1, ...c.results.map(r => r.expanded));
-  let h = '<tr><th>알고리즘 / 휴리스틱</th><th>비용</th><th>상태</th><th>확장·방문</th><th>질의 ms</th><th>ALT 전처리 ms*</th><th>비용 / 최적</th></tr>';
+  let h = `<tr><th>알고리즘 / 휴리스틱</th><th>비용 (${unitName(c.weight_unit)})</th><th>상태</th>`+'<th>확장·방문</th><th>질의 ms</th><th>ALT 전처리 ms*</th><th>비용 / 최적</th></tr>';
   c.results.forEach((r, i) => {
     const usesAlt = ['alt', 'max'].includes(r.heuristic);
     h += `<tr class="click" data-i="${i}"><td>${r.label}<div class="mini"><i style="width:${(100 * r.expanded / mx).toFixed(1)}%"></i></div></td><td>${r.found ? fmt(r.cost, 2) : '—'}</td><td>${r.found ? '성공' : FAIL[r.reason]}</td><td>${r.expanded}</td><td>${r.median_ms.toFixed(3)}</td><td>${usesAlt ? c.alt_prep_ms.toFixed(2) : '—'}</td><td>${r.cost_ratio == null ? '—' : r.cost_ratio.toFixed(3)}</td></tr>`;
@@ -572,7 +574,8 @@ async function init() {
   catch (e) { setStatus('서버에 연결할 수 없습니다. python main.py 로 실행한 뒤 표시되는 주소로 접속하세요.'); return; }
   loadWorld(meta);
   S.zone = { lat: meta.center[0], lon: meta.center[1] };
-  $('counts').textContent = `${meta.stats.nodes.toLocaleString()}개 정점 · ${meta.stats.csv_rows.toLocaleString()}개 방향 간선` + (meta.network_type ? ` · ${meta.network_type}` : '');
+  $('counts').textContent = `${meta.stats.nodes.toLocaleString()}개 정점 · ${meta.stats.csv_rows.toLocaleString()}개 방향 간선` + (meta.network_type ? ` · ${meta.network_type}` : '') + ` · 비용 단위: ${meta.weight_unit === 's' ? '이동 시간(초)' : '거리(m)'}`;
+  $('counts').title = '간선 비용: ' + meta.basis;
   for (const n of meta.nodes) { const o = document.createElement('option'); o.value = n[0]; $('ids').append(o); }
   S.start = meta.default_start; S.goal = meta.default_goal; $('start').value = S.start; $('goal').value = S.goal;
   $('speedVal').textContent = speedOf() + '/초';
