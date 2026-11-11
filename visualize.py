@@ -62,7 +62,7 @@ def _draw_base(ax, graph, xy, tr):
     project = _projector(graph)
     segs = [[project(*p) for p in r.coords] for r in graph.roads if r.u < r.v]
     ax.add_collection(LineCollection(segs, colors="#cfcfcf", linewidths=0.6, zorder=1))
-    if tr.algorithm == "walk_drive_walk" and tr.extra.get("drive_nodes"):
+    if tr.algorithm == "vehicle_switch" and tr.extra.get("drive_nodes"):
         zone = set(tr.extra["drive_nodes"])
         blue = [[project(*p) for p in r.coords] for r in graph.roads if r.u < r.v and r.u in zone and r.v in zone]
         ax.add_collection(LineCollection(blue, colors="#a9b8fb", linewidths=1.0, zorder=1.5))

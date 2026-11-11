@@ -73,7 +73,7 @@ class App:
             spec = ALGORITHMS[panel["algorithm"]]
             if panel["algorithm"] == "via":
                 kw = {"waypoints": options.get("waypoints", [])}
-            elif panel["algorithm"] == "walk_drive_walk":
+            elif panel["algorithm"] == "vehicle_switch":
                 kw = {k: options[k] for k in ("drive_center", "drive_radius", "walk_kmh", "drive_kmh", "drive_rule") if k in options}
             else:
                 kw = {k: options[k] for k in ("beam_width", "budget", "seed", "no_revisit") if k in options}
