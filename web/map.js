@@ -1,5 +1,5 @@
 /* 지도 렌더링: OSM 타일 + 도로 곡선 + 패널끼리 공유하는 이동·확대 */
-const Layers = { tiles: true, tileOpacity: 0.45, vertices: true, labels: false, boundary: true, frontier: true, tree: true, relaxed: false, heat: false };
+const Layers = { tiles: true, basemap: 'offline', tileOpacity: 0.45, vertices: true, labels: false, boundary: true, frontier: true, tree: true, relaxed: false, heat: false };
 const World = { nodes: new Map(), roads: [], meta: null };
 const tileCache = new Map();
 const groups = [];
@@ -147,7 +147,12 @@ class MapView {
     const b = this.base.getContext('2d');
     b.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     b.fillStyle = cssVar('--map-bg'); b.fillRect(0, 0, this.W, this.H);
-    if (Layers.tiles) this.drawTiles(b);
+    if (Layers.tiles) {
+      if (Layers.basemap === 'offline' && typeof drawOffline === 'function' && Offline.state !== 'error') {
+        if (Offline.state === 'ready') drawOffline(this, b);
+        else loadOfflineMap();
+      } else this.drawTiles(b);
+    }
     b.lineCap = 'round'; b.lineJoin = 'round';
     b.strokeStyle = cssVar('--road'); b.globalAlpha = 0.7; b.lineWidth = 1.2; b.beginPath();
     for (const r of World.roads) if (r.u < r.v) this.tracePts(b, r);
