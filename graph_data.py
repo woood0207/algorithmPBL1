@@ -39,6 +39,7 @@ class Road:
     u: int
     v: int
     w: float
+    length_m: float
     coords: list = field(default_factory=list)  # 지도용 도로 굴곡: [(위도, 경도), ...]
     name: str = ""
     highway: str = ""
@@ -158,7 +159,7 @@ def load_graph(nodes_csv, edges_csv, graphml=None):
             u, v, w = int(row["source"]), int(row["target"]), float(row["weight"])
             if u not in g.coords or v not in g.coords or not math.isfinite(w) or w < 0:
                 raise ValueError(f"잘못된 간선입니다: {u} -> {v}, weight={w}")
-            road = Road(len(g.roads), u, v, w, [g.coords[u], g.coords[v]], permissions=_edge_permissions(row))
+            road = Road(len(g.roads), u, v, w, float(row["length_m"]), [g.coords[u], g.coords[v]], permissions=_edge_permissions(row))
             g.roads.append(road)
             if u == v:                 # 자기 자신으로 가는 간선: 최단경로에 의미 없음
                 n_self += 1

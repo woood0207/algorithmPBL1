@@ -406,7 +406,7 @@ def vehicle_switch(c: Context):
     # Init
     g = c.graph
     vs = c.vehicle_state
-    minutes = lambda m, k: m#lambda meters, kmh: ((meters / 1000) / kmh) * 60
+    minutes = lambda meters, kmh: ((meters / 1000) / kmh) * 60
     cost = {(c.start, vs.initial_state): 0.0}
     prev = {(c.start, vs.initial_state): None}
 
@@ -424,17 +424,10 @@ def vehicle_switch(c: Context):
             step.pushed.append(u)
             step.pushed_edges.append(g.edge_id[(v, u)])
 
-
-
     # Frontend
-    # zone = drive_zone(g.roads)
     trace = Trace(c.start, c.goal)
     trace.cost_unit = "min"
-    trace.extra.update(
-        #drive_nodes=sorted(zone), 
-        #drive_radius=c.drive_radius,
-                       drive_center=list(c.drive_center or g.center), walk_kmh=c.walk_kmh, drive_kmh=c.drive_kmh,
-                       drive_rule=c.drive_rule)
+    trace.extra.update(walk_kmh=c.walk_kmh, drive_kmh=c.drive_kmh, drive_rule=c.drive_rule)
     
     end_state = None
     while heap:
@@ -450,17 +443,18 @@ def vehicle_switch(c: Context):
             end_state = v_state
             break
 
-        for u, w in g.neighbors(v):
+        for u, _ in g.neighbors(v):
             road = g.roads[g.edge_id[(v, u)]]
+            length = road.length_m
 
             if road.permits(vs.vehicle[v_state]):
                 u_state = v_state
-                total_time = time + minutes(w, speeds[vs.vehicle[u_state]])
+                total_time = time + minutes(length, speeds[vs.vehicle[u_state]])
                 push_road_maybe(prev, cost, heap, total_time, u, u_state, v, v_state, step)
 
             for u_state in vs.transitions[v_state]:
                 if road.permits(vs.vehicle[u_state]):
-                    total_time = time + minutes(w, speeds[vs.vehicle[u_state]])
+                    total_time = time + minutes(length, speeds[vs.vehicle[u_state]])
                     push_road_maybe(prev, cost, heap, total_time, u, u_state, v, v_state, step)
 
     if end_state is None:
