@@ -409,7 +409,7 @@ def vehicle_switch(c: Context):
     # Init
     g = c.graph
     vs = c.vehicle_state
-    minutes = lambda m, k: m#lambda meters, kmh: ((meters / 1000) / kmh) * 60
+    minutes = lambda meters, kmh: ((meters / 1000) / kmh) * 60
     cost = {(c.start, vs.initial_state): 0.0}
     prev = {(c.start, vs.initial_state): None}
 
@@ -427,17 +427,10 @@ def vehicle_switch(c: Context):
             step.pushed.append(u)
             step.pushed_edges.append(g.edge_id[(v, u)])
 
-
-
     # Frontend
-    # zone = drive_zone(g.roads)
     trace = Trace(c.start, c.goal)
-    trace.cost_unit = g.weight_unit   # 비용은 간선 weight의 합 (minutes 변환이 꺼져 있음)
-    trace.extra.update(
-        #drive_nodes=sorted(zone), 
-        #drive_radius=c.drive_radius,
-                       drive_center=list(c.drive_center or g.center), walk_kmh=c.walk_kmh, drive_kmh=c.drive_kmh,
-                       drive_rule=c.drive_rule)
+    trace.cost_unit = "min"            # 비용 = 길이(m) ÷ 상태별 속도 (분)
+    trace.extra.update(walk_kmh=c.walk_kmh, drive_kmh=c.drive_kmh, drive_rule=c.drive_rule)
     
     end_state = None
     while heap:
@@ -453,17 +446,18 @@ def vehicle_switch(c: Context):
             end_state = v_state
             break
 
-        for u, w in g.neighbors(v):
+        for u, _ in g.neighbors(v):
             road = g.roads[g.edge_id[(v, u)]]
+            length = road.length_m
 
             if road.permits(vs.vehicle[v_state]):
                 u_state = v_state
-                total_time = time + minutes(w, speeds[vs.vehicle[u_state]])
+                total_time = time + minutes(length, speeds[vs.vehicle[u_state]])
                 push_road_maybe(prev, cost, heap, total_time, u, u_state, v, v_state, step)
 
             for u_state in vs.transitions[v_state]:
                 if road.permits(vs.vehicle[u_state]):
-                    total_time = time + minutes(w, speeds[vs.vehicle[u_state]])
+                    total_time = time + minutes(length, speeds[vs.vehicle[u_state]])
                     push_road_maybe(prev, cost, heap, total_time, u, u_state, v, v_state, step)
 
     if end_state is None:
@@ -486,9 +480,8 @@ def vehicle_switch(c: Context):
             groups.append(dict(kind=names[v_state], edge_ids=[], meters=0.0, minutes=0.0))
         groups[-1]["edge_ids"].append(e)
         r = g.roads[e]
-        groups[-1]["meters"] += r.length if r.length is not None else r.w     # weight가 초여도 거리는 m로
-        groups[-1]["minutes"] += (r.w / 60 if g.weight_unit == "s"
-                                  else r.w / 1000 / (c.drive_kmh if v_state == "1" else c.walk_kmh) * 60)
+        groups[-1]["meters"] += r.length_m                                    # weight가 초여도 거리는 m로
+        groups[-1]["minutes"] += minutes(r.length_m, speeds[vs.vehicle[v_state]])   # 비용과 같은 계산
     trace.segments = groups
     trace.extra["distance_m"] = sum(x["meters"] for x in groups)
     return trace

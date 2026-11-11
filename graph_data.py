@@ -45,6 +45,11 @@ class Road:
     permissions: Dict[Vehicle, bool] = field(default_factory=dict) # Dict instead of set to keep dataclass serializable
     length: float | None = None                  # 실제 길이(m). CSV에 length_m이 없으면 w (예전 CSV는 w가 m)
 
+    @property
+    def length_m(self):
+        """vehicle_switch가 쓰는 이름. length와 같다."""
+        return self.length if self.length is not None else self.w
+
     def permits(self, vehicle: Vehicle):
         if vehicle in self.permissions:
             return self.permissions[vehicle]

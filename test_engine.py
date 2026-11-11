@@ -132,13 +132,13 @@ class TestOthers(Base):
             walk_m = distances(walk_graph, s).get(t)               # 도보 간선만, 길이(m)
             if walk_m is None:
                 continue
-            d = walk_m / (5 / 3.6)                                  # 5 km/h로 걸은 시간(초) = weight 단위
+            d = walk_m / 1000 / 5 * 60                              # 5 km/h로 걸은 시간(분) = 비용 단위
             self.assertLessEqual(r.cost, d + 1e-6)
             self.assert_valid(r)
             kinds = [x["kind"] for x in r.segments]
             self.assertEqual(kinds, sorted(kinds, key=["walk1", "drive", "walk2"].index))
             self.assertEqual(kinds.count("drive"), min(1, kinds.count("drive")))
-            self.assertAlmostEqual(sum(x["minutes"] for x in r.segments) * 60, r.cost, places=6)   # 비용 단위는 초
+            self.assertAlmostEqual(sum(x["minutes"] for x in r.segments), r.cost, places=6)   # 비용 단위는 분
 
     def test_drive_only_inside_zone(self):
         s, t = self.g.default_endpoints()
