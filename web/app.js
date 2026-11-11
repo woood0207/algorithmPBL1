@@ -552,6 +552,11 @@ $('k').onchange = () => pickLandmarks(0);
 $('lmMethod').onchange = () => pickLandmarks(0);
 $('rePick').onclick = () => pickLandmarks(Math.floor(Math.random() * 1e9));
 document.querySelectorAll('[data-layer]').forEach(c => { c.onchange = () => { Layers[c.dataset.layer] = c.checked; for (const g of groups) g.changed(); }; });
+$('basemap').onchange = () => { Layers.basemap = $('basemap').value; for (const g of groups) g.changed(); };
+setInterval(() => {   // 오프라인 지도 읽는 상태를 보여 준다
+  const t = Layers.basemap !== 'offline' ? '' : { loading: '오프라인 지도 읽는 중… (약 21 MB)', error: '오프라인 지도를 읽지 못해 온라인 타일을 씁니다.', ready: '오프라인 지도: localOSM (OpenStreetMap 데이터)' }[Offline.state] || '';
+  if ($('basemapInfo').textContent !== t) $('basemapInfo').textContent = t;
+}, 500);
 $('tileOpacity').oninput = () => { Layers.tileOpacity = +$('tileOpacity').value / 100; for (const g of groups) g.changed(); };
 $('fit').onclick = () => G.fit();
 $('theme').onclick = () => {

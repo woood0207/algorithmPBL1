@@ -113,7 +113,7 @@
     <section>
       <h2>지도 표시</h2>
       <div class="checks">
-        <label class="check"><input type="checkbox" data-layer="tiles" checked> OSM 배경</label>
+        <label class="check"><input type="checkbox" data-layer="tiles" checked> 배경 지도</label>
         <label class="check"><input type="checkbox" data-layer="vertices" checked> 정점</label>
         <label class="check"><input type="checkbox" data-layer="labels"> 정점 번호</label>
         <label class="check"><input type="checkbox" data-layer="boundary" checked> 추출 반경</label>
@@ -122,6 +122,13 @@
         <label class="check"><input type="checkbox" data-layer="relaxed"> 완화한 간선</label>
         <label class="check"><input type="checkbox" data-layer="heat"> h 정확도 히트맵</label>
       </div>
+      <label>배경 지도 종류
+        <select id="basemap">
+          <option value="offline">오프라인 (localOSM, 인터넷 불필요)</option>
+          <option value="online">온라인 OSM 타일</option>
+        </select>
+      </label>
+      <p class="hint" id="basemapInfo"></p>
       <div class="row"><span>배경 진하기</span><input type="range" id="tileOpacity" min="0" max="100" value="45"></div>
       <button id="fit" class="ghost wide">전체 보기</button>
     </section>
@@ -220,6 +227,7 @@
 
 <div id="tip" hidden></div>
 <script src="map.js"></script>
+<script src="offline_map.js"></script>
 <script src="app.js"></script>
 <script src="analysis.js"></script>
 </body>

@@ -14,6 +14,7 @@ from search import ALGORITHMS, HEURISTICS, run_search
 from trace_io import trace_to_dict
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
+OFFLINE_MAP = Path(__file__).resolve().parent / "localOSM" / "map_data.js"   # redduk의 오프라인 지도 데이터
 OPTION_KEYS = ("beam_width", "budget", "seed", "no_revisit", "waypoints", "drive_radius", "walk_kmh", "drive_kmh", "drive_rule", "uphill", "stairs")
 
 
@@ -161,6 +162,16 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json(self.app.meta())
         if self.path == "/api/analysis":
             return self.send_json(self.app.job_status())
+        if self.path == "/offline/map_data.js":
+            if not OFFLINE_MAP.exists():
+                return self.send_json(dict(error="localOSM/map_data.js가 없습니다."), 404)
+            data = OFFLINE_MAP.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/javascript; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return None
         return super().do_GET()
 
     def do_POST(self):
