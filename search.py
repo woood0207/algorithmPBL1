@@ -519,6 +519,30 @@ def vehicle_switch(c: Context):
     return trace
 
 
+_STOP_SNAP_CACHE = {}
+
+
+def _snap_stops(graph, stops, snap_limit):
+    """정류장 -> 가장 가까운 도로 정점. 정류장 위치는 피드를 새로 받아도 같으므로 한 번만 계산한다.
+    (예전에는 탐색할 때마다 정류장 수 × 정점 수만큼 haversine을 불러 한 번에 3초쯤 걸렸다.)"""
+    key = (id(graph), snap_limit, tuple(sorted((sid, st["lat"], st["lon"]) for sid, st in stops.items())))
+    if key not in _STOP_SNAP_CACHE:
+        if len(_STOP_SNAP_CACHE) >= 8:
+            _STOP_SNAP_CACHE.pop(next(iter(_STOP_SNAP_CACHE)))
+        connector = {}
+        for stop_id, stop in stops.items():
+            road_node = min(graph.coords, key=lambda node: haversine(
+                stop["lat"], stop["lon"], *graph.coords[node]))
+            distance = haversine(stop["lat"], stop["lon"], *graph.coords[road_node])
+            if distance <= snap_limit:
+                connector[stop_id] = (road_node, distance)
+        stops_at = {}
+        for stop_id, (road_node, distance) in connector.items():
+            stops_at.setdefault(road_node, []).append((stop_id, distance))
+        _STOP_SNAP_CACHE[key] = (connector, stops_at)
+    return _STOP_SNAP_CACHE[key]
+
+
 def time_dependent_transit(c: Context, use_astar=False):
     """Road-walking plus bus routing; each boarding cost depends on arrival time at that stop."""
     from bus_api import estimate_bus_arrivals
@@ -534,13 +558,7 @@ def time_dependent_transit(c: Context, use_astar=False):
     coords = dict(graph.coords)
     coords.update({node: (stop["lat"], stop["lon"]) for node, stop in stops.items()})
     snap_limit = float(getattr(c, "stop_snap_m", 500.0))
-    connector = {}
-    for stop_id, stop in stops.items():
-        road_node = min(graph.coords, key=lambda node: haversine(
-            stop["lat"], stop["lon"], *graph.coords[node]))
-        distance = haversine(stop["lat"], stop["lon"], *graph.coords[road_node])
-        if distance <= snap_limit:
-            connector[stop_id] = (road_node, distance)
+    connector, stops_at = _snap_stops(graph, stops, snap_limit)
 
     route_by_stop = {}
     live_arrivals = {}
@@ -589,12 +607,11 @@ def time_dependent_transit(c: Context, use_astar=False):
                     "kind": "walk", "edge_id": road.id, "distance_m": road.length_m,
                     "coordinates": road.coords or [graph.coords[node], graph.coords[neighbor]],
                 }
-            for stop_id, (road_node, distance) in connector.items():
-                if road_node == node:
-                    yield stop_id, distance / walk_mps, {
-                        "kind": "walk", "distance_m": distance,
-                        "coordinates": [graph.coords[node], coords[stop_id]],
-                    }
+            for stop_id, distance in stops_at.get(node, ()):   # 이 도로 정점에 붙은 정류장만
+                yield stop_id, distance / walk_mps, {
+                    "kind": "walk", "distance_m": distance,
+                    "coordinates": [graph.coords[node], coords[stop_id]],
+                }
         elif node in connector:
             road_node, distance = connector[node]
             yield road_node, distance / walk_mps, {
