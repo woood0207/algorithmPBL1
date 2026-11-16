@@ -26,7 +26,7 @@ pip install -r requirements.txt
 | --- | --- | --- |
 | `road_route` | 기본 지도(746 정점, 1,976 간선, 실제 도로 곡선), OSM 다운로드·재시도, GraphML, 번호 매기기, ID·좌표로 경로, 좌표→정점 연결(max-snap), 지도 HTML, 간선·정점 정보, 추출 반경 표시 | `data/`, `road_map.py`, `main.py route/build`, 웹 지도 |
 | `WeightedAstar_visualization` | f = g + w·h, Trace 저장·불러오기, viridis 확장 순서, open list, 부모 경로, 패널 공유 시계, `result.png`, `search.gif`, `--viz-only` | `search.py`, `trace_io.py`, `visualize.py`, `main.py compare`, 웹 패널 |
-| `walk drive walk` | 도보→차량→도보 상태 Dijkstra, 차량 구역(파란 간선), 속도 설정, 일반 A* 함수 `a_star` | `search.py`, 웹 프리셋 "도보-차량-도보" |
+| `walk drive walk` | 도보→차량→도보 상태 Dijkstra(차는 차가 다닐 수 있는 도로면 어디서든), 속도 설정, 일반 A* 함수 `a_star` | `search.py`, 웹 프리셋 "도보-차량-도보" |
 | `shortestpath_dijkstra.py` | 경유지 후보 중 최선 선택(Dijkstra 2회), 후보 순위표, 구간별 색, `find_route` | `search.py`, `main.py via`, 웹 프리셋 "경유지" |
 | `repbl` (Path Lab) | Greedy, BFS, 양방향 Dijkstra, Beam, Local Walk, Random Walk, 휴리스틱 3종, 예산·시드·재방문 금지, 전체 비교, JSON 저장, `register_algorithm` 확장, 벤치마크 | `search.py`, `analysis.py`, 웹 "같은 조건 전체 비교", `main.py benchmark` |
 | `repbl` (greedy_analysis) | 랜덤 쌍 실험, Wilson 신뢰구간, 스피어만 상관, 거리 구간별 그래프 4개, 산점도→지도, 알고리즘별 표시 전환 | `analysis.py`, 웹 "통계 분석", `main.py analyze` |
@@ -37,7 +37,7 @@ pip install -r requirements.txt
 
 **경로 탐색 탭**
 
-- 지도를 클릭해 출발, 도착, 랜드마크, 경유지, 차량 구역 중심을 지정합니다. ID나 좌표로 넣어도 됩니다.
+- 지도를 클릭해 출발, 도착, 랜드마크, 경유지를 지정합니다. ID나 좌표로 넣어도 됩니다.
 - 패널마다 알고리즘, 휴리스틱, w를 고르면 나란히 재생됩니다. 모든 패널이 같은 확장 횟수 시계를 쓰므로 탐색량을 바로 비교할 수 있습니다.
 - 재생, 한 단계, 처음, 끝까지, 시계 슬라이더, 속도 조절이 있습니다.
 - Trace JSON을 저장하고 다시 불러올 수 있습니다. 불러오면 탐색을 다시 돌리지 않고 그대로 재생합니다.
@@ -65,7 +65,7 @@ python main.py route --start 1 --end 100 --serve
 ```
 
 ```bash
-python main.py route --start-coord 36.0115136 129.331617 --end-coord 36.0078929 129.3287292 --solver vehicle_switch --drive-radius 400
+python main.py route --start-coord 36.0115136 129.331617 --end-coord 36.0078929 129.3287292 --solver vehicle_switch
 ```
 
 ```bash
@@ -146,14 +146,13 @@ register_algorithm("my_algo", "내 알고리즘", my_algo, uses_heuristic=True, 
 ## 합치면서 정한 것
 
 - **평행 간선과 self-loop**: CSV의 모든 행은 보존하고 간선 번호도 그대로 쓰지만, 탐색에는 같은 (u, v) 중 가장 짧은 간선만 쓰고 self-loop는 뺍니다. 그래서 BFS 결과 비용이 Path Lab 원본과 일부 쌍에서 다릅니다(같은 홉 수에서 더 짧은 간선을 고름).
-- **도보-차량-도보의 차량 간선 기준**: 원본 코드는 도착 정점만 구역 안이면 차량 속도로 계산하지만, 원본의 docstring과 지도 표시는 간선 기준(양 끝이 구역 안)입니다. 기본값은 간선 기준이고, 웹의 "차량 간선 기준"이나 `--drive-rule node`로 원본 동작을 고를 수 있습니다.
-- **차량 구역 기본값**: 중심은 지도 중심, 반경 200 m입니다(`road_route.py` 쪽 값). `multi_method.py`의 단독 실행 예시는 500 m였습니다.
+- **차량 구역 없음 (2026-11-16)**: 예전에는 "지도 중심 반경 200 m 안에서만 차를 탈 수 있다"는 차량 구역이 있었지만, 지도가 10 km로 넓어진 뒤로는 거의 항상 도보만 나와서 없앴습니다. 이제 차는 CSV에서 차량 통행이 허용된 간선(`road_use`/`mode`)이면 어디서든 탈 수 있고, 걷기 → 차 → 걷기 순서만 지킵니다. `--drive-radius`, `--drive-center`, `--drive-rule` 옵션과 웹의 구역 설정도 함께 뺐습니다.
 - **비용 단위 (2026-11-11)**: 간선 CSV의 `weight_unit`(m 또는 s)을 읽어 그래프가 단위를 압니다. s(이동 시간)면 직선거리 휴리스틱을 "직선거리 ÷ 데이터에서 가장 빠른 속도"로 바꿔 하한을 유지합니다(이전에는 미터를 그대로 써서 A*가 최단 경로를 못 찾았음). 웹 표와 CLI 출력의 단위는 각 Trace의 `cost_unit`을 따르고, 표의 "비용 기준" 열과 상단 표시줄에 무엇을 기준으로 돌렸는지 나옵니다. 수단 열이 없는 예전 CSV(`legacy_830`)도 다시 읽힙니다.
 - **휴리스틱 이름**: `haversine`은 직선거리, `geo`는 직선거리 × α(α = 간선 길이/직선거리의 최솟값)입니다. 이 그래프는 α ≥ 1이라 직선거리도 하한입니다.
 
 ## 검증
 
 - `python main.py selftest`: 정확 알고리즘과 Dijkstra 비교, Weighted A* 비용 상한, ALT 하한, 경유지, 도보-차량-도보, Trace 입출력 등 20개 (ALT 업힐 회피가 c' 그래프의 Dijkstra와 같은 비용인지 포함).
-- 팀원 원본 코드와 같은 입력으로 비교: `road_route` Dijkstra, `path_algorithms`의 정확·비정확 알고리즘, `shortest_via`, `vehicle_switch`(`--drive-rule node`)에서 300개 쌍 기준 일치(위의 BFS 차이 제외).
+- 팀원 원본 코드와 같은 입력으로 비교: `road_route` Dijkstra, `path_algorithms`의 정확·비정확 알고리즘, `shortest_via`, `vehicle_switch`(차량 구역이 있던 당시 `--drive-rule node`)에서 300개 쌍 기준 일치(위의 BFS 차이 제외).
 
 지도 데이터 © OpenStreetMap contributors (ODbL).

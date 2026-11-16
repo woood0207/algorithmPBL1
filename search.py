@@ -82,11 +82,8 @@ class Context:
     seed: int = 42
     no_revisit: bool = False
     waypoints: list = field(default_factory=list)
-    drive_center: tuple | None = None
-    drive_radius: float = 200.0
     walk_kmh: float = 5.0
     drive_kmh: float = 50.0
-    drive_rule: str = "edge"         # edge: 양 끝이 구역 안, node: 도착 정점만 구역 안 (원본 코드)
     uphill: float = 8.0              # 업힐 회피 ALT: 1 m 오르막 = 평지 λ m
     landmarks: list | None = None    # 업힐 회피 ALT: 랜드마크 ID (없으면 farthest 4개)
     stairs: float = 1.0              # 업힐 회피 ALT: 계단 간선 거리 배수 (1 = 벌점 없음)
@@ -470,30 +467,14 @@ def vehicle_switch(c: Context):
     # Init
     g = c.graph
     vs = c.vehicle_state
-    center = c.drive_center or g.center
-    radius = float(c.drive_radius)
-    if not math.isfinite(radius) or radius < 0:
-        raise ValueError("차량 구역 반경은 유한한 0 이상의 값이어야 합니다.")
-    if center is None:
-        raise ValueError("차량 구역 중심 좌표가 없습니다.")
-    drive_nodes = {
-        node for node, coordinate in g.coords.items()
-        if haversine(*coordinate, *center) <= radius
-    }
     roads_by_source = {}
     for road in g.roads:
         if road.u != road.v:
             roads_by_source.setdefault(road.u, []).append(road)
 
-    def permits_drive(road):
-        if c.drive_rule == "edge":
-            return road.u in drive_nodes and road.v in drive_nodes
-        if c.drive_rule == "node":
-            return road.v in drive_nodes
-        raise ValueError(f"알 수 없는 차량 구역 간선 기준: {c.drive_rule}")
-
     def permits_mode(road, vehicle):
-        return road.permits(vehicle) and (vehicle != Vehicle.DRIVE or permits_drive(road))
+        # 차량 구역 없음: 그 수단이 다닐 수 있는 간선(CSV road_use/mode)이면 어디서든 탈 수 있다
+        return road.permits(vehicle)
 
     minutes = lambda meters, kmh: ((meters / 1000) / kmh) * 60
     speeds = {}
@@ -526,8 +507,9 @@ def vehicle_switch(c: Context):
     # Frontend
     trace = Trace(c.start, c.goal)
     trace.cost_unit = "min"            # 비용 = 길이(m) ÷ 상태별 속도 (분)
-    trace.extra.update(walk_kmh=c.walk_kmh, drive_kmh=c.drive_kmh, drive_rule=c.drive_rule,
-                       drive_nodes=sorted(drive_nodes), drive_center=list(center), drive_radius=radius)
+    trace.extra.update(walk_kmh=c.walk_kmh, drive_kmh=c.drive_kmh,
+                       basis=f"이동 시간(분) = 길이 ÷ 속도 (도보 {c.walk_kmh:g} km/h, 차 {c.drive_kmh:g} km/h) · "
+                             "차는 차가 다닐 수 있는 도로면 어디서든, 걷기 → 차 → 걷기 순서")
     end_state = None
     while heap:
         f, v, v_state = heapq.heappop(heap)

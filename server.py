@@ -22,7 +22,7 @@ from trace_io import trace_to_dict
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 OFFLINE_MAP = Path(__file__).resolve().parent / "localOSM" / "map_data.js"   # redduk의 오프라인 지도 데이터
-OPTION_KEYS = ("beam_width", "budget", "seed", "no_revisit", "waypoints", "drive_radius", "walk_kmh", "drive_kmh", "drive_rule", "uphill", "stairs")
+OPTION_KEYS = ("beam_width", "budget", "seed", "no_revisit", "waypoints", "walk_kmh", "drive_kmh", "uphill", "stairs")
 
 
 class App:
@@ -71,8 +71,6 @@ class App:
     def options(self, body):
         given = body.get("options") or {}
         out = {k: given[k] for k in OPTION_KEYS if given.get(k) is not None}
-        if given.get("drive_center"):
-            out["drive_center"] = tuple(given["drive_center"])
         return out
 
     def landmarks(self, body):
@@ -99,7 +97,7 @@ class App:
                 kw = {"uphill": panel.get("uphill", options.get("uphill", 8.0)), "stairs": panel.get("stairs", options.get("stairs", 1.0)),
                       "landmarks": body.get("landmarks") or None}
             elif panel["algorithm"] == "vehicle_switch":
-                kw = {k: options[k] for k in ("drive_center", "drive_radius", "walk_kmh", "drive_kmh", "drive_rule") if k in options}
+                kw = {k: options[k] for k in ("walk_kmh", "drive_kmh") if k in options}
             else:
                 kw = {k: options[k] for k in ("beam_width", "budget", "seed", "no_revisit") if k in options}
             trace = run_search(self.graph, panel["algorithm"], int(body["start"]), int(body["goal"]),

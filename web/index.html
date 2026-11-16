@@ -33,7 +33,6 @@
         <button data-v="t" aria-pressed="false">도착</button>
         <button data-v="l" aria-pressed="false">랜드마크</button>
         <button data-v="w" aria-pressed="false" class="needs-via">경유지</button>
-        <button data-v="z" aria-pressed="false" class="needs-wdw">구역 중심</button>
       </div>
       <p class="hint" id="modeHint">지도를 클릭하면 출발지로 지정합니다.</p>
       <div class="two">
@@ -89,18 +88,10 @@
     <section class="needs-wdw">
       <h2>도보-차량-도보</h2>
       <div class="two">
-        <label>차량 구역 반경 (m)<input id="driveRadius" type="number" min="1" value="200"></label>
-        <label>구역 중심
-          <button id="zoneReset" class="ghost">지도 중심으로</button></label>
         <label>도보 (km/h)<input id="walkKmh" type="number" min="0.1" step="0.1" value="5"></label>
         <label>차량 (km/h)<input id="driveKmh" type="number" min="0.1" step="1" value="50"></label>
       </div>
-      <label>차량 간선 기준
-        <select id="driveRule">
-          <option value="edge">양 끝 정점이 모두 구역 안</option>
-          <option value="node">도착 정점만 구역 안 (원본 코드)</option>
-        </select>
-      </label>
+      <p class="hint">차는 차가 다닐 수 있는 도로라면 어디서든 탈 수 있습니다. 걷기 → 차 → 걷기 순서만 허용합니다.</p>
     </section>
 
     <section>

@@ -42,8 +42,7 @@ function options() {
   return {
     beam_width: Math.max(1, Math.min(100, +$('beamWidth').value || 5)), budget: Math.max(1, Math.min(50000, +$('budget').value || 2000)),
     seed: Number.isFinite(+$('seed').value) ? +$('seed').value : 42, no_revisit: $('noRevisit').checked, waypoints: S.waypoints,
-    drive_center: [S.zone.lat, S.zone.lon], drive_radius: +$('driveRadius').value || 200, walk_kmh: +$('walkKmh').value || 5,
-    drive_kmh: +$('driveKmh').value || 50, drive_rule: $('driveRule').value,
+    walk_kmh: +$('walkKmh').value || 5, drive_kmh: +$('driveKmh').value || 50,
   };
 }
 
@@ -263,17 +262,6 @@ function drawSteepRoads(v, b) {
 }
 function drawZoneRoads(v, b, tr) {
   if (tr.algorithm === 'alt_uphill') return drawSteepRoads(v, b);
-  if (tr.algorithm !== 'vehicle_switch') return;
-  const zone = zoneNodes();
-  b.save(); b.strokeStyle = '#0a35f3'; b.globalAlpha = 0.45; b.lineWidth = 2.5; b.beginPath();
-  for (const r of World.roads) if (r.u < r.v && zone.has(r.u) && zone.has(r.v)) v.tracePts(b, r);
-  b.stroke(); b.restore();
-  v.circle(b, [S.zone.lat, S.zone.lon], +$('driveRadius').value || 200, '#0a35f3');
-}
-function zoneNodes() {
-  const r = +$('driveRadius').value || 200, out = new Set();
-  for (const n of World.nodes.values()) if (haversine(n, S.zone) < r) out.add(n.id);
-  return out;
 }
 
 function drawArrows(v, c, ids, color) {
@@ -417,7 +405,7 @@ function drawWaypoints(v, c, tr) {
 }
 
 /* ---- 입력 ---- */
-const HINTS = { s: '지도를 클릭하면 출발지로 지정합니다.', t: '지도를 클릭하면 도착지로 지정합니다.', l: '지도를 클릭하면 랜드마크를 추가하거나 뺍니다.', w: '지도를 클릭하면 경유지 후보를 추가하거나 뺍니다.', z: '지도를 클릭하면 차량 구역의 중심을 옮깁니다.' };
+const HINTS = { s: '지도를 클릭하면 출발지로 지정합니다.', t: '지도를 클릭하면 도착지로 지정합니다.', l: '지도를 클릭하면 랜드마크를 추가하거나 뺍니다.', w: '지도를 클릭하면 경유지 후보를 추가하거나 뺍니다.' };
 function setMode(m) {
   S.mode = m;
   document.querySelectorAll('#clickMode button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === m));
@@ -425,11 +413,6 @@ function setMode(m) {
   G.redraw();
 }
 function onMapClick(v, x, y) {
-  if (S.mode === 'z') {
-    const scale = v.scale, wx = G.cx + (x - v.W / 2) / scale, wy = G.cy + (y - v.H / 2) / scale;
-    S.zone = { lat: Math.atan(Math.sinh(Math.PI * (1 - 2 * wy))) * 180 / Math.PI, lon: wx * 360 - 180 };
-    G.changed(); runPanels(); return;
-  }
   const id = v.nearestNode(x, y, 18);
   if (id == null) { const r = v.nearestRoad(x, y); if (r) showRoad(r, true); return; }
   if (S.mode === 's' && id !== S.goal) { setEndpoints(id, S.goal); setMode('t'); }
@@ -544,7 +527,7 @@ function panelRows() {
   const via = S.panels.some(p => VIA.has(p.algorithm)), wdw = S.panels.some(p => p.algorithm === 'vehicle_switch');
   document.querySelectorAll('.needs-via').forEach(e => { e.hidden = !via; });
   document.querySelectorAll('.needs-wdw').forEach(e => { e.hidden = !wdw; });
-  if ((S.mode === 'w' && !via) || (S.mode === 'z' && !wdw)) setMode('s');
+  if (S.mode === 'w' && !via) setMode('s');
 }
 function customChanged() { $('preset').value = 'custom'; panelRows(); runPanels(); }
 function panelsChanged() { customChanged(); }
@@ -567,7 +550,7 @@ function detailBlock() {
       else h += `<p><b>${t.label}</b>: 경로를 찾지 못했습니다. 정류장 연결 거리 또는 버스 API 응답을 확인하세요.</p>`;
     }
     if (t.algorithm === 'vehicle_switch' && t.found) {
-      h += `<p><b>${t.label}</b> 총 ${fmt(t.cost, 2)} ${unitName(t.cost_unit)} · 도로 ${fmt(t.extra.distance_m)} m` + (t.extra.drive_nodes ? ` · 차량 구역 정점 ${t.extra.drive_nodes.length}개` : '') + '<br>' + t.segments.map(s => `${SEGMENT_NAME[s.kind]} ${fmt(s.meters)} m, ${fmt(s.minutes, 2)}분`).join(' → ') + '</p>';
+      h += `<p><b>${t.label}</b> 총 ${fmt(t.cost, 2)} ${unitName(t.cost_unit)} · 도로 ${fmt(t.extra.distance_m)} m` + '<br>' + t.segments.map(s => `${SEGMENT_NAME[s.kind]} ${fmt(s.meters)} m, ${fmt(s.minutes, 2)}분`).join(' → ') + '</p>';
     }
     if (t.algorithm === 'alt_uphill' && t.found) {
       const x = t.extra;
@@ -686,10 +669,8 @@ $('applyCoord').onclick = () => {
 };
 $('preset').onchange = () => { S.panels = PRESETS[$('preset').value](); panelRows(); runPanels(); };
 $('addPanel').onclick = () => { S.panels.push({ algorithm: 'astar', heuristic: 'haversine', weight: 1 }); panelsChanged(); };
-for (const id of ['beamWidth', 'budget', 'seed', 'noRevisit', 'walkKmh', 'driveKmh', 'driveRule']) $(id).onchange = () => runPanels();
-$('driveRadius').onchange = () => { G.changed(); runPanels(); };
+for (const id of ['beamWidth', 'budget', 'seed', 'noRevisit', 'walkKmh', 'driveKmh']) $(id).onchange = () => runPanels();
 $('waypoints').onchange = () => { S.waypoints = $('waypoints').value.trim().split(/[\s,]+/).filter(Boolean).map(Number); runPanels(); };
-$('zoneReset').onclick = () => { S.zone = { lat: World.meta.center[0], lon: World.meta.center[1] }; G.changed(); runPanels(); };
 $('k').oninput = () => { $('kVal').textContent = $('k').value; };
 $('k').onchange = () => pickLandmarks(0);
 $('lmMethod').onchange = () => pickLandmarks(0);
@@ -729,7 +710,6 @@ async function init() {
     if (!World.bus || !World.bus.buses.length) return;
     G.fitPoints(World.bus.buses);
   });
-  S.zone = { lat: meta.center[0], lon: meta.center[1] };
   $('counts').textContent = `${meta.stats.nodes.toLocaleString()}개 정점 · ${meta.stats.csv_rows.toLocaleString()}개 방향 간선` + (meta.network_type ? ` · ${meta.network_type}` : '') + ` · 비용 단위: ${meta.weight_unit === 's' ? '이동 시간(초)' : '거리(m)'}`;
   $('counts').title = '간선 비용: ' + meta.basis;
   for (const n of meta.nodes) { const o = document.createElement('option'); o.value = n[0]; $('ids').append(o); }

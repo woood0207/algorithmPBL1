@@ -100,7 +100,7 @@ def cmd_compare(args):
             if algorithm in VIA_ALGORITHMS:
                 kw = dict(waypoints=args.waypoints or [])
             if algorithm == "vehicle_switch":
-                kw = dict(drive_radius=args.drive_radius, walk_kmh=args.walk_kmh, drive_kmh=args.drive_kmh)
+                kw = dict(walk_kmh=args.walk_kmh, drive_kmh=args.drive_kmh)
             if algorithm in ("transit_dijkstra", "transit_astar"):
                 from bus_api import fetch_bus_feed
                 if bus_feed is None:
@@ -129,10 +129,7 @@ def cmd_route(args):
     end = select_endpoint(graph.coords, args.end, args.end_coord, "도착", args.max_snap)
     options = {}
     if args.solver == "vehicle_switch":
-        options = dict(drive_radius=args.drive_radius, walk_kmh=args.walk_kmh, drive_kmh=args.drive_kmh,
-                       drive_rule=args.drive_rule)
-        if args.drive_center:
-            options["drive_center"] = tuple(args.drive_center)
+        options = dict(walk_kmh=args.walk_kmh, drive_kmh=args.drive_kmh)
     if args.solver in VIA_ALGORITHMS:
         options = dict(waypoints=args.waypoints or [])
     if args.solver == "alt_uphill":
@@ -325,12 +322,8 @@ def alt_options(parser):
 
 
 def drive_options(parser):
-    parser.add_argument("--drive-radius", type=float, default=200, help="차량 구역 반경(m)")
-    parser.add_argument("--drive-center", type=float, nargs=2, metavar=("LAT", "LON"), help="차량 구역 중심")
     parser.add_argument("--walk-kmh", type=float, default=5.0)
     parser.add_argument("--drive-kmh", type=float, default=50.0)
-    parser.add_argument("--drive-rule", choices=["edge", "node"], default="edge",
-                        help="edge: 양 끝이 구역 안, node: 도착 정점만 구역 안(원본 코드)")
 
 
 def parse_args():
@@ -357,7 +350,6 @@ def parse_args():
     p.add_argument("--no-revisit", action="store_true")
     p.add_argument("--waypoints", type=int, nargs="+")
     alt_options(p)
-    p.add_argument("--drive-radius", type=float, default=200)
     p.add_argument("--walk-kmh", type=float, default=5.0)
     p.add_argument("--drive-kmh", type=float, default=50.0)
     p.set_defaults(func=cmd_compare)

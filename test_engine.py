@@ -181,7 +181,7 @@ class TestOthers(Base):
         from elevation import uphill_graph
         walk_graph = uphill_graph(self.g, 0.0)
         for s, t in self.pairs[:30]:
-            r = run_search(self.g, "vehicle_switch", s, t, drive_radius=500)
+            r = run_search(self.g, "vehicle_switch", s, t)
             walk_m = distances(walk_graph, s).get(t)               # 도보 간선만, 길이(m)
             if walk_m is None:
                 continue
@@ -193,14 +193,16 @@ class TestOthers(Base):
             self.assertEqual(kinds.count("drive"), min(1, kinds.count("drive")))
             self.assertAlmostEqual(sum(x["minutes"] for x in r.segments), r.cost, places=6)   # 비용 단위는 분
 
-    def test_drive_only_inside_zone(self):
+    def test_drive_only_on_drivable_roads(self):
+        """차량 구역은 없앴다. 차량 구간은 차가 다닐 수 있는 간선만 쓰고, 기본 예시에는 차량 구간이 있다."""
+        from graph_data import Vehicle
         s, t = self.g.default_endpoints()
-        r = run_search(self.g, "vehicle_switch", s, t, drive_radius=400)
-        zone = set(r.extra["drive_nodes"])
-        for seg in r.segments:
-            if seg["kind"] == "drive":
-                for e in seg["edge_ids"]:
-                    self.assertTrue(self.g.roads[e].u in zone and self.g.roads[e].v in zone)
+        r = run_search(self.g, "vehicle_switch", s, t)
+        drive = [seg for seg in r.segments if seg["kind"] == "drive"]
+        self.assertTrue(drive)
+        for seg in drive:
+            for e in seg["edge_ids"]:
+                self.assertTrue(self.g.roads[e].permits(Vehicle.DRIVE))
 
     def test_landmark_methods(self):
         for m in METHODS:
