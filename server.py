@@ -17,7 +17,7 @@ from bus_api import BusAPIError, fetch_bus_feed
 from graph_data import distances, load_graph
 from graph_data import Vehicle, haversine
 from landmarks import ALT, METHODS, pick_landmarks
-from search import ALGORITHMS, HEURISTICS, run_search
+from search import ALGORITHMS, HEURISTICS, VIA_ALGORITHMS, run_search
 from trace_io import trace_to_dict
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -93,7 +93,7 @@ class App:
             spec = ALGORITHMS[panel["algorithm"]]
             if panel["algorithm"] in ("transit_dijkstra", "transit_astar"):
                 kw = {"bus_feed": self.bus_feed(), "walk_kmh": options.get("walk_kmh", 5.0)}
-            elif panel["algorithm"] == "via":
+            elif panel["algorithm"] in VIA_ALGORITHMS:
                 kw = {"waypoints": options.get("waypoints", [])}
             elif panel["algorithm"] == "alt_uphill":
                 kw = {"uphill": panel.get("uphill", options.get("uphill", 8.0)), "stairs": panel.get("stairs", options.get("stairs", 1.0)),

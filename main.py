@@ -8,6 +8,7 @@
   python main.py route --start 1 --end 100        # road_route처럼 경로 JSON과 지도 HTML
   python main.py route --start-coord 36.01 129.33 --end-coord 36.00 129.32 --solver vehicle_switch
   python main.py via --start 1 --end 500 --waypoints 100 250 320
+  python main.py via --start 1 --end 500 --waypoints 100 250 320 --algo via_weighted --weight 2
   python main.py benchmark --start 1 --goal 60 --repeats 5
   python main.py analyze --pairs 300 --bins 5
   python main.py build --center 36.01243647 129.32180209 --radius 1000
@@ -28,7 +29,7 @@ from urllib.parse import urlparse
 from analysis import ANALYSIS_ALGOS, compare_all, print_report, run_analysis, save_analysis
 from graph_data import load_graph
 from landmarks import ALT, METHODS, pick_landmarks
-from search import ALGORITHMS, HEURISTICS, run_search
+from search import ALGORITHMS, HEURISTICS, VIA_ALGORITHMS, run_search
 from trace_io import load_trace, save_trace
 
 HERE = Path(__file__).resolve().parent
@@ -95,8 +96,8 @@ def cmd_compare(args):
         traces = []
         bus_feed = None
         for i, (algorithm, weight) in enumerate(panels):
-            kw = options if algorithm not in ("via", "vehicle_switch", "dijkstra", "astar", "weighted") else {}
-            if algorithm == "via":
+            kw = options if algorithm not in (*VIA_ALGORITHMS, "vehicle_switch", "dijkstra", "astar", "weighted") else {}
+            if algorithm in VIA_ALGORITHMS:
                 kw = dict(waypoints=args.waypoints or [])
             if algorithm == "vehicle_switch":
                 kw = dict(drive_radius=args.drive_radius, walk_kmh=args.walk_kmh, drive_kmh=args.drive_kmh)
@@ -132,7 +133,7 @@ def cmd_route(args):
                        drive_rule=args.drive_rule)
         if args.drive_center:
             options["drive_center"] = tuple(args.drive_center)
-    if args.solver == "via":
+    if args.solver in VIA_ALGORITHMS:
         options = dict(waypoints=args.waypoints or [])
     if args.solver == "alt_uphill":
         options = dict(uphill=args.uphill, stairs=args.stairs, landmarks=args.landmarks)
@@ -203,20 +204,28 @@ def cmd_via(args):
 
     graph = open_graph(args)
     start, goal = endpoint_or_default(graph, args.start, args.end)
-    trace = run_search(graph, "via", start, goal, waypoints=args.waypoints)
-    print(f"\n{'순위':>4} {'경유지':>7} {'총거리':>10} {'출발→경유':>10} {'경유→도착':>10}")
+    alt = make_alt(graph, args, args.algo != "via" and args.heuristic in ("alt", "max"))
+    trace = run_search(graph, args.algo, start, goal, heuristic=args.heuristic, weight=args.weight, alt=alt,
+                       waypoints=args.waypoints)
+    print(f"\n{trace.label}")
+    print(f"{'순위':>4} {'경유지':>7} {'총거리':>10} {'출발→경유':>10} {'경유→도착':>10}  비고")
+    skipped = {"bound": "하한 ≥ 최선이라 생략", "unreachable": "도달 불가"}
     for i, r in enumerate(trace.extra["ranking"], 1):
         fmt = lambda v: "∞" if v is None else f"{v:.1f}"
-        print(f"{i:>4} {r['node']:>7} {fmt(r['total']):>10} {fmt(r['from_start']):>10} {fmt(r['to_goal']):>10}")
+        note = skipped.get(r.get("skipped"), "")
+        if r.get("skipped") == "bound":
+            note += f" (하한 {r['lower_bound']:.1f})"
+        print(f"{i:>4} {r['node']:>7} {fmt(r['total']):>10} {fmt(r['from_start']):>10} {fmt(r['to_goal']):>10}  {note}")
     if not trace.found:
         raise ValueError("어떤 경유지로도 도착할 수 없습니다.")
-    print(f"\n선택: {trace.extra['via']}  총거리 {trace.cost:.2f} m")
+    print(f"\n선택: {trace.extra['via']}  총거리 {trace.cost:.2f} m  확장 {trace.expanded}"
+          + (f"  A* {trace.extra['astar_runs']}회" if "astar_runs" in trace.extra else ""))
     print("경로:", trace.path)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    save_trace(trace, out / "via_trace.json")
-    draw_static(graph, [trace], out / "via_route.png")
-    print("그림 저장:", out / "via_route.png")
+    save_trace(trace, out / f"{args.algo}_trace.json")
+    draw_static(graph, [trace], out / f"{args.algo}_route.png")
+    print("그림 저장:", out / f"{args.algo}_route.png")
 
 
 def cmd_benchmark(args):
@@ -379,7 +388,12 @@ def parse_args():
     p.add_argument("--start", type=int)
     p.add_argument("--end", type=int)
     p.add_argument("--waypoints", type=int, nargs="+", required=True)
+    p.add_argument("--algo", choices=VIA_ALGORITHMS, default="via",
+                   help="via: Dijkstra 2회, via_astar: 후보별 A*, via_weighted: 후보별 Weighted A*")
+    p.add_argument("--heuristic", choices=list(HEURISTICS), default="haversine", help="via_astar, via_weighted용")
+    p.add_argument("--weight", type=float, help="via_weighted의 w (기본 3)")
     p.add_argument("--out", default=str(HERE / "output"))
+    alt_options(p)
     p.set_defaults(func=cmd_via)
 
     p = common(sub.add_parser("benchmark", help="모든 알고리즘을 반복 측정해 results.json 저장"))

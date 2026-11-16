@@ -143,6 +143,40 @@ class TestOthers(Base):
             self.assert_valid(r)
             self.assertIn(r.extra["via"], r.path)
 
+    def test_via_astar_matches_via_dijkstra(self):
+        """경유지 A*는 휴리스틱(직선거리, ALT, max)과 상관없이 경유지 Dijkstra와 같은 최적 비용을 내야 한다."""
+        for s, t in self.pairs[:20]:
+            cands = random.Random(s).sample(self.g.main_nodes, 4)
+            base = run_search(self.g, "via", s, t, waypoints=cands)
+            for h in ("haversine", "geo", "alt", "max"):
+                r = run_search(self.g, "via_astar", s, t, heuristic=h, alt=self.alt, waypoints=cands)
+                self.assertEqual(r.found, base.found, h)
+                self.assertAlmostEqual(r.cost, base.cost, places=6, msg=f"{h} {s}->{t}")
+                self.assert_valid(r)
+                self.assertIn(r.extra["via"], r.path)
+                self.assertLessEqual(r.extra["astar_runs"], 2 * len(cands))
+
+    def test_via_weighted_bound(self):
+        for s, t in self.pairs[:20]:
+            cands = random.Random(s).sample(self.g.main_nodes, 4)
+            best = run_search(self.g, "via", s, t, waypoints=cands).cost
+            for w in (0, 1, 1.5, 3):
+                r = run_search(self.g, "via_weighted", s, t, weight=w, heuristic="haversine", waypoints=cands)
+                self.assert_valid(r)
+                self.assertLessEqual(r.cost, max(w, 1) * best + 1e-6, f"w={w} {s}->{t}")
+                if w <= 1:
+                    self.assertAlmostEqual(r.cost, best, places=6)
+
+    def test_via_astar_unreachable_waypoint(self):
+        lonely = next(n for n in self.g.coords if n not in set(self.g.main_nodes))
+        s, t = self.pairs[0]
+        r = run_search(self.g, "via_astar", s, t, waypoints=[lonely])
+        self.assertFalse(r.found)
+        self.assertIsNone(r.extra["via"])
+        r = run_search(self.g, "via_astar", s, t, waypoints=[lonely, self.pairs[1][0]])
+        self.assertTrue(r.found)
+        self.assertEqual(r.extra["via"], self.pairs[1][0])
+
     def test_vehicle_switch_never_slower_than_walking(self):
         from elevation import uphill_graph
         walk_graph = uphill_graph(self.g, 0.0)
