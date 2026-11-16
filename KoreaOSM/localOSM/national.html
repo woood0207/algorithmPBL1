@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en" translate="no" class="notranslate">
+<head>
+  <meta charset="utf-8">
+  <meta name="google" content="notranslate">
+  <meta http-equiv="Content-Language" content="en">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>South Korea Route Planner · localOSM</title>
+  <link rel="stylesheet" href="assets/leaflet.css?v=english-final-20261116">
+  <link rel="stylesheet" href="assets/national.css?v=english-final-20261116">
+</head>
+<body>
+<div id="map" aria-label="Offline map of South Korea"></div>
+<section id="route-legend" class="route-legend" aria-label="Route display" hidden>
+  <strong>SELECTED ROUTE</strong>
+  <div class="route-key"><span><i class="key-train"></i>Train</span><span><i class="key-bus"></i>Bus</span><span><i class="key-walk"></i>Walk</span><span><i class="key-car"></i>Car</span></div>
+  <div class="route-tools"><button id="fit-route">Fit route</button><label><input id="focus-route" type="checkbox" checked>Dim background</label></div>
+</section>
+<aside class="panel">
+  <div class="eyebrow">LOCAL OSM / SOUTH KOREA</div>
+  <h1>South Korea Route Planner</h1>
+  <p class="intro">Find the fastest or shortest route across South Korea.</p>
+  <div class="badge">Offline map · English</div>
+  <p id="data-status" role="status">Loading national dataset…</p>
+  <label for="route-mode">Transport</label>
+  <select id="route-mode"><option value="4">Car</option><option value="1">Walk</option><option value="2">Cycle</option><option value="7">Mixed road modes</option><option value="rail_transit">Train</option><option value="bus_transit">Bus</option><option value="public_transit">Train + bus</option></select>
+  <section id="door-transit-options" hidden>
+    <label for="door-access-mode">First and last connection</label><select id="door-access-mode"><option value="walk">Walk → Transit → Walk</option><option value="drive">Car / taxi → Transit → Car / taxi</option></select>
+    <label for="door-routing-model">Routing model</label><select id="door-routing-model"><option value="network">Connected network · Ignore timetables</option><option value="schedule">Imported timetables · Scheduled departures</option></select>
+    <div id="door-network-options">
+    <label for="door-rail-speed">Assumed train speed (km/h)</label><input id="door-rail-speed" type="number" min="10" max="350" step="1" value="100">
+    <p class="hint">Assume connected tracks and terminals are served continuously, with no waiting. Train + bus compares both modes and bus connections to stations.</p>
+    </div>
+    <label for="door-candidates">Station and terminal candidates</label><select id="door-candidates"><option value="1">Nearest facility per mode</option><option value="3">Compare nearest 3 per mode (slower)</option></select>
+    <div id="door-schedule-options" hidden>
+    <label for="door-departure">Departure from origin (KST)</label><input id="door-departure" type="text" inputmode="text" placeholder="YYYY-MM-DD HH:mm" aria-label="Departure from origin, YYYY-MM-DD HH:mm, Korea Standard Time" autocomplete="off" spellcheck="false">
+    <label for="door-stop-policy">Candidate facilities</label><select id="door-stop-policy"><option value="served">Prefer stops in imported timetables</option><option value="all">All facilities, including unverified service</option></select>
+    <label for="door-transfer">Minimum transfer margin</label><select id="door-transfer"><option value="600">10 min</option><option value="300">5 min</option><option value="900">15 min</option><option value="0">0 min</option></select>
+    </div>
+    <p class="hint">Nearby stations and terminals are selected by proximity. Access and final connections follow roads. Network distances and times use assumed service.</p>
+  </section>
+  <label for="route-objective">Optimize for</label>
+  <select id="route-objective"><option value="time">Fastest · Applied road speeds</option><option value="distance">Shortest distance</option></select>
+  <div class="endpoints">
+    <div class="endpoint"><i class="dot start"></i><label for="start-coord">Start (latitude, longitude)</label><input id="start-coord" placeholder="e.g. 37.5665, 126.9780"></div>
+    <div class="endpoint"><i class="dot end"></i><label for="end-coord">Destination (latitude, longitude)</label><input id="end-coord" placeholder="e.g. 35.1796, 129.0756"></div>
+  </div>
+  <div class="buttons"><button id="pick-start" class="active">Pick start</button><button id="pick-end">Pick destination</button><button id="swap" title="Swap start and destination" aria-label="Swap start and destination">⇅</button><button id="clear-route">Clear</button></div>
+  <div class="buttons"><button id="calculate" class="primary">Find fastest route</button><button id="home">View country</button></div>
+  <p id="route-status" role="status" aria-live="polite">Choose a start point, then a destination on the map.</p>
+  <div id="route-result" hidden></div>
+  <p class="hint">Times use road speeds and exclude traffic and signal delays. Roads without tagged limits use estimated speeds.</p>
+  <p class="hint">Points connect to roads within 500 m. Gray connectors are excluded from road-only distance and included in transit estimates.</p>
+  <p id="mixed-note" class="hint" hidden>Mixed road mode can change transport at any road node. Vehicle availability and transfer costs are not modeled.</p>
+  <hr>
+  <details id="transit-panel" open>
+    <summary><strong>Stations and terminals</strong></summary>
+    <p id="transit-status" class="hint" role="status">Loading offline transit data…</p>
+    <label class="check"><input id="transit-rails" type="checkbox" checked> Show railway infrastructure</label>
+    <label class="check"><input id="transit-stations" type="checkbox" checked> Show train stations</label>
+    <label class="check"><input id="transit-terminals" type="checkbox" checked> Show bus terminals</label>
+    <p class="hint">Background railways show infrastructure. Scheduled services are handled separately.</p>
+    <input id="transit-search" type="search" aria-label="Search stations and terminals" placeholder="Search stations: Seoul, Busan…" autocomplete="off">
+    <div id="transit-search-results"></div>
+    <div class="transit-selected"><div id="transit-from">Departure stop: not selected</div><div id="transit-to">Arrival stop: not selected</div></div>
+    <label for="transit-departure">Departure (KST)</label><input id="transit-departure" type="text" inputmode="text" placeholder="YYYY-MM-DD HH:mm" aria-label="Departure, YYYY-MM-DD HH:mm, Korea Standard Time" autocomplete="off" spellcheck="false">
+    <label for="transit-modes">Timetable transport modes</label><select id="transit-modes"><option value="all">Train + bus</option><option value="rail">Train only</option><option value="bus">Bus only</option></select>
+    <label for="transit-margin">Minimum transfer margin</label><select id="transit-margin"><option value="600">10 min</option><option value="300">5 min</option><option value="900">15 min</option><option value="0">0 min</option></select>
+    <div class="buttons"><button id="transit-plan" class="primary" disabled>Search timetables</button><button id="transit-refresh">Refresh data</button></div>
+    <p id="transit-message" class="hint" role="status">Choose departure and arrival stations or terminals from the map or search.</p>
+    <div id="transit-result" hidden></div>
+    <p class="hint">Station-to-station timetable search includes a 5-minute boarding margin. Access from your origin is excluded. Import timetable CSV files to use scheduled services.</p>
+    <p class="hint"><a href="transit_templates/journeys.csv" download>Timetable CSV template</a> · <a href="transit_templates/transfers.csv" download>Walking transfer CSV template</a></p>
+  </details>
+  <hr>
+  <label for="search">Search places</label>
+  <input id="search" type="search" placeholder="Seoul, Busan, Jeju…" autocomplete="off">
+  <div id="results" aria-live="polite"></div>
+  <div class="examples"><span>Try a route</span><button data-example="seoul-busan">Seoul → Busan</button><button data-example="seoul-pohang">Seoul → Pohang</button><button data-example="daejeon-gwangju">Daejeon → Gwangju</button></div>
+  <hr>
+  <label class="check"><input id="show-buildings" type="checkbox" checked> Show buildings when zoomed in</label>
+  <label class="check"><input id="speed-colors" type="checkbox"> Color detailed roads by speed limit</label>
+  <div id="speed-legend" class="hint" hidden><span style="color:#be5143">● Up to 30</span> · <span style="color:#bb861e">● Up to 50</span> · <span style="color:#49815b">● Up to 80</span> · <span style="color:#357da6">● Over 80</span> km/h · Gray: untagged</div>
+  <p id="map-status" class="hint" role="status"></p>
+  <div id="detail" class="hint">Click a road to see its name and type.</div>
+  <details class="limits"><summary>Speed model and data limits</summary><p>Bidirectional Dijkstra minimizes distance or travel time. Directional OSM speeds take priority. Route details show applied speeds and estimates.</p><p>Fallback speeds (km/h): motorway 80–100, motorway links 40, trunk 60, primary roads 50, residential 30, service roads 20. These are model estimates. Walking defaults to 4.5 and cycling to 15.</p><p>Lane and conditional speeds use the lowest parsed value throughout. Time and weather conditions are not evaluated. Unparsed tags are flagged.</p><p>Traffic, signals, turn restrictions, barriers, conditional access and ferries are not modeled. Mixed road mode excludes transfer costs.</p><p>Map data © OpenStreetMap contributors, ODbL / Geofabrik.</p></details>
+</aside>
+<script src="assets/leaflet.js?v=english-final-20261116"></script>
+<script src="assets/english_ui.js?v=english-final-20261116"></script>
+<script src="assets/national.js?v=english-final-20261116"></script>
+<script src="assets/route_visuals.js?v=english-final-20261116"></script>
+<script src="assets/door_transit.js?v=english-final-20261116"></script>
+<script src="assets/transit.js?v=english-final-20261116"></script>
+</body>
+</html>

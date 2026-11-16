@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.venv/
+localOSM/national_data/
+localOSM/transit_data/
+localOSM/english_names.json
+*.restore-*.tmp

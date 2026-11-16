@@ -1,0 +1,138 @@
+{
+  "format": "koreaosm-data-bundle-v1",
+  "archive": "zip",
+  "parts": [
+    {
+      "name": "korea-osm-data.zip.part001",
+      "size": 536870912,
+      "sha256": "ee73da569baf84baa19e0415e78cfc77e8c82994d3c659a6ea684f85f7c99952"
+    },
+    {
+      "name": "korea-osm-data.zip.part002",
+      "size": 536870912,
+      "sha256": "f668133c0fbc8fa34cf31d15fb384c6aabfd27852a9b49c4cb88b6307cfc41ba"
+    },
+    {
+      "name": "korea-osm-data.zip.part003",
+      "size": 275356570,
+      "sha256": "7640d073d5ca1287f37787d2085fdd4f55ac17da3990003509c08b60ce936e52"
+    }
+  ],
+  "files": [
+    {
+      "path": "localOSM/english_names.json",
+      "size": 27200626,
+      "sha256": "e3a1c3c5f4df3c2db5211d43c7920996ec072c0a64bf68bd8ade8e33d8776135"
+    },
+    {
+      "path": "localOSM/national_data/incident.bin",
+      "size": 17213248,
+      "sha256": "d375f8b759883e3671058ac2a7fb8829a1497f93ca7c8379150e67b13f630945"
+    },
+    {
+      "path": "localOSM/national_data/latitudes.bin",
+      "size": 137705984,
+      "sha256": "7406be792a2e87103fa4c19b82e65e28f33328da2cc4b1390cf57a0b9db63eb4"
+    },
+    {
+      "path": "localOSM/national_data/lengths.bin",
+      "size": 286844928,
+      "sha256": "1f3e52295bf9b7fc5e2e9149372976c1931303cf13cc58453cf0df0862e138f1"
+    },
+    {
+      "path": "localOSM/national_data/longitudes.bin",
+      "size": 137705984,
+      "sha256": "ec73ae36fb50fe89114c884131d9ad829dad3a85ce4179b9dade5f4d41a71d8a"
+    },
+    {
+      "path": "localOSM/national_data/manifest.json",
+      "size": 1126,
+      "sha256": "58aef1d5af1fbebe7e1c63aff8789bf16c72f3020507f6e43f2d8e6dacaa9c1a"
+    },
+    {
+      "path": "localOSM/national_data/map.sqlite",
+      "size": 2757365760,
+      "sha256": "d3f26e4301cdc988b468d604511f6ac9315a8d13c3d93c909e0428f1cbe9e967"
+    },
+    {
+      "path": "localOSM/national_data/masks.bin",
+      "size": 35855616,
+      "sha256": "918ba76387f67ee9b8c45fd304000d32783bbb6a5cd9d207c83dd5cbc75fb8a4"
+    },
+    {
+      "path": "localOSM/national_data/node_ids.bin",
+      "size": 137705984,
+      "sha256": "54c9889ab50e7a782d32a6e74942e09a22a7d625016cf8487a812c5b0a89c4d5"
+    },
+    {
+      "path": "localOSM/national_data/offsets.bin",
+      "size": 68852996,
+      "sha256": "e3fd22feb65591c8469cbdbb3f89463a33899ee91ad7979b4ac8f26a84b07fcf"
+    },
+    {
+      "path": "localOSM/national_data/overview.json",
+      "size": 17749853,
+      "sha256": "46b31bd77f8ba02df2de1344fc246bb43cdac9c9a24bedb7749ecb823131e340"
+    },
+    {
+      "path": "localOSM/national_data/reverse_edges.bin",
+      "size": 143422464,
+      "sha256": "38bf94bf77b60e40b8eca8a98357f4371686bed54a5d2db5ffa11dd9a709fde0"
+    },
+    {
+      "path": "localOSM/national_data/reverse_offsets.bin",
+      "size": 68852996,
+      "sha256": "4df3eb326de4e35b0054f712a2ec2ea7f43a89d6db891e0e411d6da02b1f296b"
+    },
+    {
+      "path": "localOSM/national_data/reverse_sources.bin",
+      "size": 143422464,
+      "sha256": "9c26e7958521c34b9df846a9c02d32d215dffd273e2e79c0baff4dcb80850166"
+    },
+    {
+      "path": "localOSM/national_data/speeds/edge_profiles.bin",
+      "size": 143422464,
+      "sha256": "1f4f858987d042093a2a4ac458c2b1704c0927db8530b1a2c31ca5d92cef5754"
+    },
+    {
+      "path": "localOSM/national_data/speeds/edge_roads.bin",
+      "size": 143422464,
+      "sha256": "08a32ab0fe33d3b799677125d51e63c366f90ccbf8e2500afdd588bd3678a6b5"
+    },
+    {
+      "path": "localOSM/national_data/speeds/manifest.json",
+      "size": 31396,
+      "sha256": "ddc1d6a59bf68b7634782fdf30fbe163c3e5589c04177cd2e54277e7fd75eb6d"
+    },
+    {
+      "path": "localOSM/national_data/speeds/roads.sqlite",
+      "size": 92221440,
+      "sha256": "d9e7c0507bab9e39c5180392ad489b8e286ec690142792b4b2dd5a0ee5e52ca2"
+    },
+    {
+      "path": "localOSM/national_data/targets.bin",
+      "size": 143422464,
+      "sha256": "c42f6930e0e079d3d1840d105550fc09a37d52b755c5c06864ee81e4f72a53d7"
+    },
+    {
+      "path": "localOSM/transit_data/manifest.json",
+      "size": 590,
+      "sha256": "97b06598de807cf335a125e35fcfb113ea268f47cd99237ac1cf2b83a319b248"
+    },
+    {
+      "path": "localOSM/transit_data/rail_graph.json",
+      "size": 3684050,
+      "sha256": "604616b6e9fad05e3005cc66a9b2d742d032c9c33fbce3a090ccbb730f8cb592"
+    },
+    {
+      "path": "localOSM/transit_data/rail_overview.json",
+      "size": 1225400,
+      "sha256": "4be52ea5f4aba6496c8df22e5fcbbd746abfa5f3d4623fcee85da5587306958e"
+    },
+    {
+      "path": "localOSM/transit_data/transit.sqlite",
+      "size": 6885376,
+      "sha256": "8f0a39bfe3218c21c5110115bb38b9fe29a6828f5274cf3ff7ffc18bddd76ced"
+    }
+  ]
+}
