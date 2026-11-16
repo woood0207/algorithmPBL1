@@ -30,7 +30,7 @@ class Step:
     pushed: list = field(default_factory=list)        # 이번 확장에서 open에 들어간 노드
     pushed_edges: list = field(default_factory=list)  # pushed와 같은 순서의 Road.id
     pruned: list = field(default_factory=list)        # Beam에서 이번에 버려진 후보
-    direction: str | None = None                      # 양방향 탐색: forward / backward
+    direction: str | None = None                      # 양방향 탐색: forward / backward, 경유 A*: to_via / from_via
     state: int | None = None                          # 도보-차량-도보: 0, 1, 2
     move_edge: int | None = None                      # 보행 알고리즘: 이 칸에 올 때 쓴 간선
 

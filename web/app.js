@@ -23,7 +23,7 @@ const PRESETS = {
   bfs: () => [{ algorithm: 'bfs' }, { algorithm: 'bidirectional' }],
   wdw: () => [{ algorithm: 'vehicle_switch' }],
   transit: () => [{ algorithm: 'transit_dijkstra' }, { algorithm: 'transit_astar', heuristic: 'haversine' }],
-  via: () => [{ algorithm: 'via' }],
+  via: () => [{ algorithm: 'via' }, { algorithm: 'via_astar', heuristic: 'haversine' }, { algorithm: 'via_weighted', heuristic: 'haversine', weight: 3 }],
   uphill: () => [{ algorithm: 'astar', heuristic: 'alt' }, { algorithm: 'alt_uphill', uphill: 8 }, { algorithm: 'alt_uphill', uphill: 8, stairs: 3 }],
 };
 const S = {
@@ -33,6 +33,7 @@ const S = {
 };
 const G = new ViewGroup(); G.needsFit = true;
 const algo = id => World.meta.algorithms.find(a => a.id === id);
+const VIA = new Set(['via', 'via_astar', 'via_weighted']);
 const fmt = (v, d = 1) => v == null ? '—' : v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
 const setStatus = t => { $('status').textContent = t; };
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -49,7 +50,7 @@ function options() {
 /* ---- 실행 ---- */
 async function runPanels({ jumpEnd = false } = {}) {
   const token = ++S.token;
-  if (S.panels.some(p => p.algorithm === 'via') && !S.waypoints.length) defaultWaypoints();
+  if (S.panels.some(p => VIA.has(p.algorithm)) && !S.waypoints.length) defaultWaypoints();
   setStatus('탐색 중…');
   try {
     const data = await api('/api/run', { start: S.start, goal: S.goal, landmarks: S.landmarks, options: options(), panels: S.panels });
@@ -360,7 +361,7 @@ function drawTrace(v, c, tr) {
     }
   }
   if (S.mode === 'l' || tr.algorithm === 'alt_uphill' || (tr.heuristic && ['alt', 'max'].includes(tr.heuristic))) drawLandmarks(v, c, tr);
-  if (tr.algorithm === 'via' || S.mode === 'w') drawWaypoints(v, c, tr);
+  if (VIA.has(tr.algorithm) || S.mode === 'w') drawWaypoints(v, c, tr);
   for (const [key, label, color] of [['start', '출발', 'green'], ['goal', '도착', 'red']]) {
     const snap = S.snap[key];
     if (snap && !S.fromFile) {
@@ -520,7 +521,7 @@ function panelRows() {
       for (const [id, label] of Object.entries(World.meta.heuristics)) if (id !== 'zero') h.add(new Option(label, id, false, id === (p.heuristic || a.default_heuristic)));
       h.onchange = () => { p.heuristic = h.value; customChanged(); };
       sub.append(h);
-      if (p.algorithm === 'weighted') {
+      if (p.algorithm === 'weighted' || p.algorithm === 'via_weighted') {
         const w = document.createElement('input'); w.type = 'number'; w.min = 0; w.step = 0.5; w.value = p.weight ?? 3; w.title = '가중치 w';
         w.onchange = () => { p.weight = Math.max(0, +w.value || 0); customChanged(); };
         sub.append(w);
@@ -540,7 +541,7 @@ function panelRows() {
     box.append(row);
   });
   $('algoHint').textContent = [...new Set(S.panels.map(p => algo(p.algorithm).hint))].join(' / ');
-  const via = S.panels.some(p => p.algorithm === 'via'), wdw = S.panels.some(p => p.algorithm === 'vehicle_switch');
+  const via = S.panels.some(p => VIA.has(p.algorithm)), wdw = S.panels.some(p => p.algorithm === 'vehicle_switch');
   document.querySelectorAll('.needs-via').forEach(e => { e.hidden = !via; });
   document.querySelectorAll('.needs-wdw').forEach(e => { e.hidden = !wdw; });
   if ((S.mode === 'w' && !via) || (S.mode === 'z' && !wdw)) setMode('s');
@@ -575,8 +576,11 @@ function detailBlock() {
         `오르막 ${fmt(x.shortest_climb_m - x.climb_m, 0)} m 줄이고 ${fmt(x.distance_m - x.shortest_distance_m)} m 더 걷기<br>` +
         t.segments.map(s => `${SEGMENT_NAME[s.kind]} ${fmt(s.meters, 0)} m${s.kind === 'uphill' ? ` (+${fmt(s.climb, 0)} m)` : ''}`).join(' → ') + '</p>';
     }
-    if (t.algorithm === 'via' && t.extra.ranking) {
-      h += `<table><tr><th>경유지 후보</th><th>총거리</th><th>출발→경유</th><th>경유→도착</th></tr>` + t.extra.ranking.map(r => `<tr><td>${r.node === t.extra.via ? '<b>' + r.node + ' (선택)</b>' : r.node}</td><td>${fmt(r.total)}</td><td>${fmt(r.from_start)}</td><td>${fmt(r.to_goal)}</td></tr>`).join('') + '</table>';
+    if (VIA.has(t.algorithm) && t.extra.ranking) {
+      const skip = r => r.skipped === 'bound' ? `생략 (하한 ${fmt(r.lower_bound)} ≥ 최선)` : r.skipped === 'unreachable' ? '도달 불가' : '';
+      const runs = t.extra.astar_runs != null ? ` · A* ${t.extra.astar_runs}회 · 생략 ${t.extra.pruned}개` : '';
+      h += `<p><b>${t.label}</b> 확장 ${t.steps.length}${runs}</p>`;
+      h += `<table><tr><th>경유지 후보</th><th>총거리</th><th>출발→경유</th><th>경유→도착</th><th>비고</th></tr>` + t.extra.ranking.map(r => `<tr><td>${r.node === t.extra.via ? '<b>' + r.node + ' (선택)</b>' : r.node}</td><td>${fmt(r.total)}</td><td>${fmt(r.from_start)}</td><td>${fmt(r.to_goal)}</td><td class="hint">${skip(r)}</td></tr>`).join('') + '</table>';
     }
     if (t.path.length && t.found) h += `<div class="pathlist"><b>${t.label}</b>: ${t.path.join(' → ')}</div>`;
   }

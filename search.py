@@ -7,7 +7,7 @@ f(n) = g(n) + w * h(n)
 
 여기에 팀원들의 알고리즘을 같은 Trace 형식으로 합쳤다.
   repbl/path_algorithms   Greedy, BFS, 양방향 Dijkstra, Beam, Local Walk, Random Walk
-  shortestpath_dijkstra   경유지 후보 중 최선을 고르는 Dijkstra 2회
+  shortestpath_dijkstra   경유지 후보 중 최선을 고르는 Dijkstra 2회 (+ 같은 문제를 A*, Weighted A*로)
   walk drive walk         상태를 가진 Dijkstra (도보 -> 차량 -> 도보)
   walk drive walk/a_star  임의 인접 리스트용 A*
   pbl1/alt_visualizer     ALT 휴리스틱 (landmarks.py)
@@ -76,6 +76,7 @@ class Context:
     goal: int
     h: object                        # h(v): v에서 goal까지의 추정 비용
     weight: float = 1.0
+    h_to: object = None              # h_to(t) -> (v -> t까지의 추정 비용). 경유 A*가 목표를 바꿀 때 사용
     beam_width: int = 5
     budget: int = 2000
     seed: int = 42
@@ -368,21 +369,28 @@ def _full_dijkstra(graph, src, trace, reverse, label):
     return dist, parent
 
 
-def shortest_via(c):
-    """start -> (waypoints 중 하나) -> goal 최단 경로."""
-    g, trace = c.graph, Trace(c.start, c.goal)
+VIA_ALGORITHMS = ("via", "via_astar", "via_weighted")
+_json_safe = lambda v: None if v == INF else v
+
+
+def _check_waypoints(c):
     if not c.waypoints:
         raise ValueError("경유지 후보를 하나 이상 지정하세요.")
     for n in c.waypoints:
-        if n not in g.coords:
+        if n not in c.graph.coords:
             raise ValueError(f"노드 {n}이(가) 노드 파일에 없습니다.")
+
+
+def shortest_via(c):
+    """start -> (waypoints 중 하나) -> goal 최단 경로."""
+    g, trace = c.graph, Trace(c.start, c.goal)
+    _check_waypoints(c)
     dist_s, par_s = _full_dijkstra(g, c.start, trace, False, "forward")   # 1회차: d(start, v)
     dist_t, par_t = _full_dijkstra(g, c.goal, trace, True, "backward")    # 2회차: d(v, goal)
 
     ranking = sorted((dist_s.get(x, INF) + dist_t.get(x, INF), x, dist_s.get(x, INF), dist_t.get(x, INF))
                      for x in c.waypoints)
-    json_safe = lambda v: None if v == INF else v
-    trace.extra["ranking"] = [dict(node=x, total=json_safe(t), from_start=json_safe(a), to_goal=json_safe(b))
+    trace.extra["ranking"] = [dict(node=x, total=_json_safe(t), from_start=_json_safe(a), to_goal=_json_safe(b))
                               for t, x, a, b in ranking]
     total, best, _, _ = ranking[0]
     trace.extra["via"] = None if total == INF else best
@@ -393,6 +401,65 @@ def shortest_via(c):
     _finish(trace, g, True, first + second[1:], cost=total)
     trace.segments = [dict(kind="to_via", edge_ids=g.path_edges(first)),
                       dict(kind="from_via", edge_ids=g.path_edges(second))]
+    return trace
+
+
+def shortest_via_astar(c, w):
+    """start -> (waypoints 중 하나) -> goal 을 (Weighted) A*로 푼다.
+    후보 x마다 A*(start -> x)와 A*(x -> goal)를 돌리고 총비용이 가장 작은 x를 고른다.
+      - 1구간은 목표가 x이므로 휴리스틱도 x 기준(h_x)으로 다시 만든다.
+      - 하한 h_x(start) + h(x)가 작은 후보부터 보고, 하한이 지금까지의 최선 이상이면 A*를 생략한다.
+        1구간을 끝낸 뒤에도 d(start, x) + h(x) >= 최선이면 2구간을 생략한다.
+    h가 consistent이면 w = 1에서 최적, w > 1이면 각 구간이 w배 이내라 총비용도 w × 최적 이내다.
+    (생략된 후보는 하한이 이미 최선 이상이므로 이 보장을 깨지 않는다.)"""
+    g, trace = c.graph, Trace(c.start, c.goal, weight=w)
+    _check_waypoints(c)
+    h_to = c.h_to or (lambda t: (lambda v: g.heuristic(v, t)))
+    h_goal = c.h                                     # x -> goal 구간은 원래 goal 기준 휴리스틱
+    h_leg1 = {x: h_to(x) for x in dict.fromkeys(c.waypoints)}
+    bound = {x: h_leg1[x](c.start) + h_goal(x) for x in h_leg1}
+
+    def run_leg(src, dst, h, label):
+        sub = weighted_astar(g, src, dst, w, h)
+        for s in sub.steps:                          # 여러 번의 탐색 기록을 한 trace에 이어 붙인다
+            s.order, s.direction = len(trace.steps), label
+            trace.steps.append(s)
+        return sub
+
+    best, best_legs, rows, runs = INF, None, {}, 0
+    for x in sorted(h_leg1, key=lambda x: (bound[x], x)):
+        if bound[x] >= best:
+            rows[x] = (INF, INF, INF, "bound")
+            continue
+        first = run_leg(c.start, x, h_leg1[x], "to_via")
+        runs += 1
+        if not first.found:
+            rows[x] = (INF, INF, INF, "unreachable")
+            continue
+        if first.cost + h_goal(x) >= best:
+            rows[x] = (INF, first.cost, INF, "bound")
+            continue
+        second = run_leg(x, c.goal, h_goal, "from_via")
+        runs += 1
+        if not second.found:
+            rows[x] = (INF, first.cost, INF, "unreachable")
+            continue
+        total = first.cost + second.cost
+        rows[x] = (total, first.cost, second.cost, None)
+        if total < best:
+            best, best_legs = total, (x, first, second)
+
+    ranking = sorted(((t, x, a, b, why) for x, (t, a, b, why) in rows.items()), key=lambda r: (r[0], bound[r[1]], r[1]))
+    trace.extra["ranking"] = [dict(node=x, total=_json_safe(t), from_start=_json_safe(a), to_goal=_json_safe(b),
+                                   lower_bound=bound[x], skipped=why) for t, x, a, b, why in ranking]
+    trace.extra.update(astar_runs=runs, pruned=sum(r[3] == "bound" for r in rows.values()))
+    trace.extra["via"] = best_legs[0] if best_legs else None
+    if best_legs is None:
+        return _finish(trace, g, False, [], reason="unreachable")
+    _, first, second = best_legs
+    _finish(trace, g, True, first.path + second.path[1:], cost=best)
+    trace.segments = [dict(kind="to_via", edge_ids=first.edge_ids),
+                      dict(kind="from_via", edge_ids=second.edge_ids)]
     return trace
 
 
@@ -822,6 +889,11 @@ register_algorithm("random", "Random Walk", lambda c: _walk(c, True),
                    hint="시드가 고정된 무작위 이동 · 예산 내 성공 보장 없음", default_heuristic="zero")
 register_algorithm("via", "경유지 Dijkstra", shortest_via, comparable=False, default_heuristic="zero",
                    hint="출발·도착에서 Dijkstra 2회 · 후보 중 총거리 최소인 경유지 선택")
+register_algorithm("via_astar", "경유지 A*", lambda c: shortest_via_astar(c, 1), uses_heuristic=True, comparable=False,
+                   default_weight=1, hint="후보마다 A*(출발→경유)·A*(경유→도착) · 하한이 최선 이상인 후보는 생략 · 최적")
+register_algorithm("via_weighted", "경유지 Weighted A*", lambda c: shortest_via_astar(c, c.weight), uses_heuristic=True,
+                   comparable=False, default_weight=3,
+                   hint="후보마다 Weighted A* 2회 · 총비용 ≤ w × 최적 (w=0 Dijkstra, w=1 A*)")
 register_algorithm("vehicle_switch", "도보-차량-도보", vehicle_switch, uses_heuristic=True, comparable=False, default_heuristic="zero",
                    hint="상태 3개짜리 Dijkstra · 이동 시간(분) 최소")
 register_algorithm("transit_dijkstra", "실시간 버스 Dijkstra", transit_dijkstra, comparable=False,
@@ -855,6 +927,8 @@ def make_label(spec, heuristic, weight):
     if spec.id == "weighted":
         name = "UCS" if weight == 0 else ("A*" if weight == 1 else "Weighted A*")
         label = f"{name} (w={weight:g})"
+    elif spec.id == "via_weighted":
+        label = f"{spec.label} (w={weight:g})"
     else:
         label = spec.label
     if spec.uses_heuristic and weight != 0 and heuristic:
@@ -871,8 +945,9 @@ def run_search(graph, algorithm, start, goal, heuristic=None, weight=None, alt=N
         weight = spec.default_weight if spec.default_weight is not None else 1.0
     if h is None:
         h = build_heuristic(graph, name, goal, alt)
+    h_to = lambda target: build_heuristic(graph, name, target, alt)
     begin = time.perf_counter()
-    trace = spec.run(Context(graph, start, goal, h, weight=weight, **options))
+    trace = spec.run(Context(graph, start, goal, h, weight=weight, h_to=h_to, **options))
     trace.elapsed_ms = (time.perf_counter() - begin) * 1000
     trace.algorithm = algorithm
     trace.heuristic = name if spec.uses_heuristic else None

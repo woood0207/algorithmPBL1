@@ -60,7 +60,7 @@
           <option value="greedy">Greedy · Beam · Local · Random</option>
           <option value="bfs">BFS · 양방향 Dijkstra</option>
           <option value="wdw">Vehicle switch</option>
-          <option value="via">경유지</option>
+          <option value="via">경유지 (Dijkstra · A* · Weighted A*)</option>
           <option value="uphill">ALT · 업힐 회피 (λ = 8) · 계단 ×3 추가</option>
           <option value="custom" hidden>직접 구성</option>
         </select>
@@ -83,7 +83,7 @@
     <section class="needs-via">
       <h2>경유지 후보</h2>
       <label>노드 ID (공백으로 구분)<input id="waypoints"></label>
-      <p class="hint">출발·도착에서 Dijkstra를 한 번씩 돌려 총거리가 가장 짧은 후보를 고릅니다.</p>
+      <p class="hint">출발·도착에서 Dijkstra를 한 번씩 돌리거나(경유지 Dijkstra), 후보마다 A*·Weighted A*를 두 번씩 돌려 총거리가 가장 짧은 후보를 고릅니다.</p>
     </section>
 
     <section class="needs-wdw">
