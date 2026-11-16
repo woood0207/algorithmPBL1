@@ -12,6 +12,8 @@ python main.py
 
 터미널에 나온 주소(기본 `http://127.0.0.1:8000/`)를 브라우저로 여세요. HTML 파일을 직접 열면 서버와 연결되지 않습니다. 배경 지도 타일에는 인터넷이 필요하고, 없어도 도로와 탐색은 그대로 보입니다.
 
+웹 서버만 직접 실행하려면 `py -3 server.py` 또는 `py -3 server.py --serve`를 사용하세요. 포트는 `--port 8001`처럼 지정할 수 있습니다.
+
 PNG·GIF, 지도 HTML, 새 지역 다운로드까지 쓰려면 패키지를 설치합니다.
 
 ```bash
@@ -29,6 +31,7 @@ pip install -r requirements.txt
 | `repbl` (Path Lab) | Greedy, BFS, 양방향 Dijkstra, Beam, Local Walk, Random Walk, 휴리스틱 3종, 예산·시드·재방문 금지, 전체 비교, JSON 저장, `register_algorithm` 확장, 벤치마크 | `search.py`, `analysis.py`, 웹 "같은 조건 전체 비교", `main.py benchmark` |
 | `repbl` (greedy_analysis) | 랜덤 쌍 실험, Wilson 신뢰구간, 스피어만 상관, 거리 구간별 그래프 4개, 산점도→지도, 알고리즘별 표시 전환 | `analysis.py`, 웹 "통계 분석", `main.py analyze` |
 | `pbl1/alt_visualizer` | ALT, 랜드마크 개수·Farthest·Random·클릭 토글, 전처리 정보, h 정확도 히트맵, 노드 툴팁(실제 거리/h ALT/h 직선/g), 하한을 준 랜드마크 연결선, 끝까지·한 단계 재생, 다크 모드, ALT 설명 | `landmarks.py`, 웹 전반 |
+| 국토교통부 TAGO 버스 | 포항 207·306 노선·정류장·실시간 차량, 도보와 실시간 버스 도착을 결합한 시간 의존 Dijkstra/A* | `bus_api.py`, `search.py`, `server.py`, 웹 지도 |
 
 ## 웹 뷰어
 
@@ -38,6 +41,7 @@ pip install -r requirements.txt
 - 패널마다 알고리즘, 휴리스틱, w를 고르면 나란히 재생됩니다. 모든 패널이 같은 확장 횟수 시계를 쓰므로 탐색량을 바로 비교할 수 있습니다.
 - 재생, 한 단계, 처음, 끝까지, 시계 슬라이더, 속도 조절이 있습니다.
 - Trace JSON을 저장하고 다시 불러올 수 있습니다. 불러오면 탐색을 다시 돌리지 않고 그대로 재생합니다.
+- 포항 207·306 실시간 라우팅은 루트 `.env`의 `TAGO_SERVICE_KEY`를 사용합니다. 웹 뷰어가 국토교통부 TAGO API에서 노선·정류장·실시간 차량을 받아 지도에 표시합니다. "포항 207·306 실시간 버스" 프리셋은 정류장에 도착하는 시각을 반영해 예상 대기시간과 탑승시간을 계산하며, API 오류는 화면에 표시합니다.
 - 배경 지도는 기본이 **오프라인**입니다. `localOSM/map_data.js`(도로·물·녹지·건물·지명)를 서버가 `/offline/map_data.js`로 넘겨 주고, 뷰어(`web/offline_map.js`)가 캔버스에 직접 그립니다. 인터넷이 필요 없고, 처음 열 때 약 21 MB를 한 번 읽습니다. "지도 표시 → 배경 지도 종류"에서 온라인 OSM 타일로 바꿀 수 있습니다. 건물은 줌 15 이상에서만 그립니다.
 
 **통계 분석 탭**: 처음 열면 실험이 자동으로 돌아갑니다. 기본 300쌍은 1분 정도 걸립니다.
@@ -63,6 +67,12 @@ python main.py route --start 1 --end 100 --serve
 ```bash
 python main.py route --start-coord 36.0115136 129.331617 --end-coord 36.0078929 129.3287292 --solver vehicle_switch --drive-radius 400
 ```
+
+```bash
+python main.py route --start 1 --end 100 --solver transit_astar
+```
+
+실시간 버스 탐색의 모든 이동 시간은 초 기준입니다. 00:00~05:20에는 운행 종료로 간주하고, 운행 시간 중에도 종점 정류장 차량은 제외합니다. 현재 운행 차량이 없거나 정류장 도착 시각 이후에 도착할 차량이 없으면 버스 탑승 간선을 닫고, 가상의 배차 간격을 가정하지 않습니다. 운행 종료와 막차 통과는 경로 비교 카드에 표시하며 도보 이동을 권장합니다. API 테스트·시연에서는 `fetch_bus_feed(force_service_active=True)`로 운행 종료 판정을 재정의할 수 있습니다.
 
 ```bash
 python main.py via --start 1 --end 500 --waypoints 100 250 320
@@ -97,12 +107,14 @@ search.py        모든 탐색 알고리즘과 등록부
 landmarks.py     ALT 전처리와 휴리스틱
 elevation.py     정점 고도와 업힐 가중치 (ALT 업힐 회피)
 trace_io.py      Trace 형식, 저장·불러오기
+bus_api.py       국토교통부 TAGO API, 포항 노선·정류장·실시간 차량 파싱
 visualize.py     PNG, GIF
 analysis.py      전체 비교, 통계 실험
 road_map.py      OSM 다운로드, 지도 HTML
 server.py        웹 뷰어용 로컬 서버
 web/             웹 뷰어 (서버가 준 Trace를 그리기만 함)
 test_engine.py   회귀 테스트
+test_bus_routing.py  버스 API 파서·시간 의존 라우팅 오프라인 테스트
 data/            road_route 그래프와 예전 830 그래프
 ```
 

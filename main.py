@@ -93,12 +93,18 @@ def cmd_compare(args):
         panels = [("weighted", w) for w in args.weights] if not args.algos else [(a, None) for a in args.algos]
         options = dict(beam_width=args.beam_width, budget=args.budget, seed=args.seed, no_revisit=args.no_revisit)
         traces = []
+        bus_feed = None
         for i, (algorithm, weight) in enumerate(panels):
             kw = options if algorithm not in ("via", "vehicle_switch", "dijkstra", "astar", "weighted") else {}
             if algorithm == "via":
                 kw = dict(waypoints=args.waypoints or [])
             if algorithm == "vehicle_switch":
                 kw = dict(drive_radius=args.drive_radius, walk_kmh=args.walk_kmh, drive_kmh=args.drive_kmh)
+            if algorithm in ("transit_dijkstra", "transit_astar"):
+                from bus_api import fetch_bus_feed
+                if bus_feed is None:
+                    bus_feed = fetch_bus_feed()
+                kw = dict(bus_feed=bus_feed, walk_kmh=args.walk_kmh)
             trace = run_search(graph, algorithm, start, goal, heuristic=args.heuristic, weight=weight, alt=alt, **kw)
             name = f"trace_w{weight:g}.json" if weight is not None else f"trace_{i}_{algorithm}.json"
             save_trace(trace, out / "traces" / name)
@@ -115,6 +121,7 @@ def cmd_route(args):
     from road_map import edges_of, map_html, select_endpoint, serve_map
 
     graph = open_graph(args)
+    bus_data = None
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
     start = select_endpoint(graph.coords, args.start, args.start_coord, "출발", args.max_snap)
@@ -129,6 +136,10 @@ def cmd_route(args):
         options = dict(waypoints=args.waypoints or [])
     if args.solver == "alt_uphill":
         options = dict(uphill=args.uphill, stairs=args.stairs, landmarks=args.landmarks)
+    if args.solver in ("transit_dijkstra", "transit_astar"):
+        from bus_api import fetch_bus_feed
+        bus_data = fetch_bus_feed()
+        options = dict(bus_feed=bus_data, walk_kmh=args.walk_kmh)
     alt = make_alt(graph, args, args.heuristic in ("alt", "max"))
     trace = run_search(graph, args.solver, start["id"], end["id"], heuristic=args.heuristic, alt=alt, **options)
     if not trace.found:
@@ -137,19 +148,35 @@ def cmd_route(args):
 
     edges = edges_of(graph)
     rows = [e + 1 for e in trace.edge_ids]
+    transit = args.solver in ("transit_dijkstra", "transit_astar")
+    route_segments = ([{**{k: v for k, v in segment.items() if k != "edge_ids"},
+                        "edge_rows": [edge_id + 1 for edge_id in segment.get("edge_ids", [])]}
+                       for segment in trace.segments] if transit else
+                      [dict(kind=segment["kind"], edge_rows=[edge_id + 1 for edge_id in segment["edge_ids"]],
+                            **{k: v for k, v in segment.items() if k in ("meters", "minutes")})
+                       for segment in trace.segments])
     result = {
         "start": start, "end": end, "algorithm": trace.label, "cost": trace.cost, "cost_unit": trace.cost_unit,
-        "distance_m": sum(edges[r - 1].weight for r in rows), "path": trace.path, "edge_rows": rows,
+        "distance_m": (trace.extra["walk_distance_m"] + trace.extra["ride_distance_m"] if transit
+                       else sum(edges[r - 1].weight for r in rows)),
+        "path": trace.path, "edge_rows": rows,
         "segments": [{"edge_row": r, "source": edges[r - 1].source, "target": edges[r - 1].target,
                       "weight_m": edges[r - 1].weight} for r in rows],
-        "route_segments": [dict(kind=s["kind"], edge_rows=[e + 1 for e in s["edge_ids"]],
-                                **{k: v for k, v in s.items() if k in ("meters", "minutes")}) for s in trace.segments],
+        "route_segments": route_segments,
         "via": trace.extra.get("via"), "ranking": trace.extra.get("ranking"),
     }
+    if transit:
+        result.update({k: trace.extra[k] for k in ("walk_s", "wait_s", "ride_s", "total_minutes",
+                                                    "walk_distance_m", "ride_distance_m")})
     stem = f"route_{start['id']}_{end['id']}"
     (output / f"{stem}.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print("경로:", " → ".join(map(str, trace.path)))
-    print(f"{trace.label}: {trace.cost:,.2f} {trace.cost_unit}, 도로 거리 {result['distance_m']:,.2f} m")
+    if transit:
+        print(f"{trace.label}: {trace.cost:,.2f} {trace.cost_unit}, 이동 거리 {result['distance_m']:,.2f} m")
+        print(f"도보 {trace.extra['walk_s'] / 60:.2f}분 + 실제 버스 대기 {trace.extra['wait_s'] / 60:.2f}분 "
+              f"+ 탑승 {trace.extra['ride_s'] / 60:.2f}분")
+    else:
+        print(f"{trace.label}: {trace.cost:,.2f} {trace.cost_unit}, 도로 거리 {result['distance_m']:,.2f} m")
     if "climb_m" in trace.extra:
         x = trace.extra
         result.update({k: x[k] for k in ("uphill_lambda", "stairs_factor", "climb_m", "descent_m", "stairs_m",
@@ -162,7 +189,7 @@ def cmd_route(args):
     print("JSON:", output / f"{stem}.json")
     try:
         map_html(graph.coords, edges, output / f"{stem}.html", graph.center, graph.radius, result,
-                 trace.extra.get("drive_nodes"))
+                 trace.extra.get("drive_nodes"), bus_data=bus_data)
     except ImportError:
         print("folium이 없어 지도 HTML은 건너뜁니다. (pip install folium)")
         return

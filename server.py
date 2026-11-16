@@ -1,14 +1,21 @@
 """웹 뷰어용 로컬 서버. 표준 라이브러리만 쓴다.
 알고리즘은 전부 Python 엔진에서 돌고, 브라우저는 Trace JSON을 받아 그리기만 한다.
 """
+import argparse
+import heapq
 import json
+import math
 import threading
+import time
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from analysis import ANALYSIS_ALGOS, compare_all, run_analysis
-from graph_data import distances
+from bus_api import BusAPIError, fetch_bus_feed
+from graph_data import distances, load_graph
+from graph_data import Vehicle, haversine
 from landmarks import ALT, METHODS, pick_landmarks
 from search import ALGORITHMS, HEURISTICS, run_search
 from trace_io import trace_to_dict
@@ -24,7 +31,18 @@ class App:
         self.dataset = dataset
         self.alt_cache = {}
         self.lock = threading.Lock()
+        self.bus_lock = threading.Lock()
+        self.bus_cache = None
         self.job = {"state": "idle", "done": 0, "total": 0, "result": None, "error": None}
+
+    def bus_feed(self, force_refresh=False):
+        with self.bus_lock:
+            if not force_refresh and self.bus_cache and self.bus_cache["fetched_at"] > time.time() - 30:
+                return self.bus_cache
+            if force_refresh:
+                self.bus_cache = None
+            self.bus_cache = fetch_bus_feed()
+            return self.bus_cache
 
     def meta(self):
         g = self.graph
@@ -73,7 +91,9 @@ class App:
         traces = []
         for panel in body["panels"]:
             spec = ALGORITHMS[panel["algorithm"]]
-            if panel["algorithm"] == "via":
+            if panel["algorithm"] in ("transit_dijkstra", "transit_astar"):
+                kw = {"bus_feed": self.bus_feed(), "walk_kmh": options.get("walk_kmh", 5.0)}
+            elif panel["algorithm"] == "via":
                 kw = {"waypoints": options.get("waypoints", [])}
             elif panel["algorithm"] == "alt_uphill":
                 kw = {"uphill": panel.get("uphill", options.get("uphill", 8.0)), "stairs": panel.get("stairs", options.get("stairs", 1.0)),
@@ -87,6 +107,97 @@ class App:
                                weight=panel.get("weight"), alt=alt, **kw)
             traces.append(trace_to_dict(trace))
         return dict(traces=traces, prep_ms=alt.prep_ms if alt else 0)
+
+    def route_comparison(self, body):
+        start, goal = int(body["start"]), int(body["goal"])
+        if start not in self.graph.coords or goal not in self.graph.coords:
+            raise ValueError(f"출발 {start} 또는 도착 {goal}이(가) 정점 목록에 없습니다.")
+        options = self.options(body)
+        walk_kmh = float(options.get("walk_kmh", 5.0))
+        if not math.isfinite(walk_kmh) or walk_kmh <= 0:
+            raise ValueError("도보 속도는 유한한 양수여야 합니다.")
+
+        roads_by_source = {}
+        for road in self.graph.roads:
+            if road.u != road.v and (not road.permissions or road.permits(Vehicle.WALK)):
+                roads_by_source.setdefault(road.u, []).append(road)
+        walk_mps = walk_kmh / 3.6
+        walk_dist = {start: 0.0}
+        walk_parent = {start: None}
+        queue = [(0.0, start)]
+        while queue:
+            elapsed, node = heapq.heappop(queue)
+            if elapsed != walk_dist[node]:
+                continue
+            if node == goal:
+                break
+            for road in roads_by_source.get(node, ()):
+                candidate = elapsed + road.length_m / walk_mps
+                if candidate < walk_dist.get(road.v, math.inf):
+                    walk_dist[road.v] = candidate
+                    walk_parent[road.v] = (node, road.id)
+                    heapq.heappush(queue, (candidate, road.v))
+
+        walking = None
+        if goal in walk_dist:
+            path_edges = []
+            node = goal
+            while walk_parent[node] is not None:
+                node, edge_id = walk_parent[node]
+                path_edges.append(edge_id)
+            distance_m = sum(self.graph.roads[edge_id].length_m for edge_id in path_edges)
+            walking = {"time_s": walk_dist[goal], "distance_m": distance_m}
+
+        transit = None
+        transit_error = None
+        service_ended = False
+        last_bus_missed = False
+        try:
+            feed = self.bus_feed()
+            service_ended = bool(feed.get("service_ended"))
+            transit_trace = run_search(self.graph, "transit_dijkstra", start, goal,
+                                        bus_feed=feed, walk_kmh=walk_kmh)
+            service_ended = bool(transit_trace.extra.get("service_ended", service_ended))
+            last_bus_missed = bool(transit_trace.extra.get("last_bus_missed"))
+        except BusAPIError as error:
+            transit_error = str(error)
+        else:
+            if transit_trace.found:
+                segments = transit_trace.segments
+                bus_indexes = [i for i, segment in enumerate(segments) if segment["kind"] == "bus"]
+                if bus_indexes:
+                    first_bus, last_bus = bus_indexes[0], bus_indexes[-1]
+                    access_walk_s = sum(segment.get("walk_s", 0.0) for segment in segments[:first_bus])
+                    egress_walk_s = sum(segment.get("walk_s", 0.0) for segment in segments[last_bus + 1:])
+                    transfer_walks = [
+                        sum(segment.get("walk_s", 0.0) for segment in segments[left + 1:right])
+                        for left, right in zip(bus_indexes, bus_indexes[1:])
+                    ]
+                else:
+                    access_walk_s = transit_trace.extra["walk_s"]
+                    egress_walk_s = 0.0
+                    transfer_walks = []
+                transit = {
+                    "time_s": transit_trace.cost,
+                    "walk_s": transit_trace.extra["walk_s"],
+                    "wait_s": transit_trace.extra["wait_s"],
+                    "ride_s": transit_trace.extra["ride_s"],
+                    "access_walk_s": access_walk_s,
+                    "egress_walk_s": egress_walk_s,
+                    "transfer_walks_s": transfer_walks,
+                    "walk_distance_m": transit_trace.extra["walk_distance_m"],
+                    "ride_distance_m": transit_trace.extra["ride_distance_m"],
+                    "service_ended": service_ended,
+                    "service_message": transit_trace.extra.get("service_message"),
+                    "last_bus_missed": last_bus_missed,
+                    "buses": [{"route_no": segment["route_no"], "wait_s": segment["wait_s"],
+                               "ride_s": segment["ride_s"]}
+                              for segment in segments if segment["kind"] == "bus"],
+                }
+        delta_s = walking["time_s"] - transit["time_s"] if walking and transit else None
+        return {"walking": walking, "transit": transit, "delta_s": delta_s,
+                "start": start, "goal": goal, "walk_kmh": walk_kmh, "transit_error": transit_error,
+                "service_ended": service_ended, "last_bus_missed": last_bus_missed}
 
     def compare(self, body):
         alt = self.alt(body["landmarks"])
@@ -158,11 +269,19 @@ class Handler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_GET(self):
-        if self.path == "/api/meta":
+        parsed_path = urlsplit(self.path)
+        if parsed_path.path == "/api/meta":
             return self.send_json(self.app.meta())
-        if self.path == "/api/analysis":
+        if parsed_path.path == "/api/bus":
+            try:
+                query = parse_qs(parsed_path.query)
+                force_refresh = query.get("force_refresh", ["false"])[0].lower() == "true"
+                return self.send_json(self.app.bus_feed(force_refresh=force_refresh))
+            except BusAPIError as error:
+                return self.send_json(dict(error=str(error)), 502)
+        if parsed_path.path == "/api/analysis":
             return self.send_json(self.app.job_status())
-        if self.path == "/offline/map_data.js":
+        if parsed_path.path == "/offline/map_data.js":
             if not OFFLINE_MAP.exists():
                 return self.send_json(dict(error="localOSM/map_data.js가 없습니다."), 404)
             data = OFFLINE_MAP.read_bytes()
@@ -176,12 +295,15 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         routes = {"/api/landmarks": self.app.landmarks, "/api/run": self.app.run, "/api/compare": self.app.compare,
-                  "/api/heuristic": self.app.heuristic_table, "/api/analysis": self.app.start_analysis}
+                  "/api/heuristic": self.app.heuristic_table, "/api/analysis": self.app.start_analysis,
+                  "/api/route-comparison": self.app.route_comparison}
         if self.path not in routes:
             return self.send_json(dict(error="없는 주소입니다."), 404)
         try:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
             self.send_json(routes[self.path](body))
+        except BusAPIError as error:
+            self.send_json(dict(error=str(error)), 502)
         except (ValueError, KeyError, TypeError) as error:
             self.send_json(dict(error=str(error)), 400)
 
@@ -198,3 +320,24 @@ def serve(graph, dataset, port=8000):
             server.serve_forever()
         except KeyboardInterrupt:
             print("\n서버를 종료했습니다.")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="경로 탐색 웹 뷰어 서버")
+    parser.add_argument("--serve", action="store_true", help="서버를 실행합니다 (기본 동작)")
+    parser.add_argument("--port", type=int, default=8000, help="로컬 HTTP 포트 (기본값: 8000)")
+    parser.add_argument("--data-dir", type=Path, default=Path(__file__).resolve().parent / "data",
+                        help="road_nodes.csv와 road_edges.csv가 있는 폴더")
+    args = parser.parse_args(argv)
+    if not 0 <= args.port <= 65535:
+        parser.error("--port는 0~65535 사이여야 합니다.")
+
+    from main import dataset_paths
+
+    nodes, edges, graphml = dataset_paths(args.data_dir)
+    graph = load_graph(nodes, edges, graphml)
+    serve(graph, str(args.data_dir), args.port)
+
+
+if __name__ == "__main__":
+    main()

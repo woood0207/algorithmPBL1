@@ -1,6 +1,6 @@
 /* 지도 렌더링: OSM 타일 + 도로 곡선 + 패널끼리 공유하는 이동·확대 */
 const Layers = { tiles: true, basemap: 'offline', tileOpacity: 0.45, vertices: true, labels: false, boundary: true, frontier: true, tree: true, relaxed: false, heat: false };
-const World = { nodes: new Map(), roads: [], meta: null };
+const World = { nodes: new Map(), roads: [], meta: null, bus: null, stopsByNode: new Map() };
 const tileCache = new Map();
 const groups = [];
 
@@ -33,6 +33,15 @@ function loadWorld(meta) {
   }
 }
 
+function setBusData(data) {
+  World.bus = data;
+  World.stopsByNode = new Map(data.stops.map(stop => {
+    const [wx, wy] = mercator(stop.lat, stop.lon);
+    return [stop.node_id, { ...stop, wx, wy }];
+  }));
+  for (const group of groups) group.changed();
+}
+
 class ViewGroup {
   constructor() { this.cx = 0.5; this.cy = 0.5; this.z = 14; this.views = new Set(); groups.push(this); }
   changed() { for (const v of this.views) { v.baseDirty = true; v.dirty = true; } }
@@ -45,6 +54,24 @@ class ViewGroup {
     this.cx = (a + b) / 2; this.cy = (c + d) / 2;
     this.z = Math.log2(Math.min((v.W - 40) / ((b - a) * 256), (v.H - 40) / ((d - c) * 256)));
     this.changed();
+  }
+  fitPoints(points, padding = 72) {
+    const v = [...this.views][0];
+    if (!v || !v.W || !points.length) return false;
+    const projected = points.map(point => mercator(point.lat, point.lon));
+    const xs = projected.map(point => point[0]), ys = projected.map(point => point[1]);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const spanX = Math.max(maxX - minX, 0.001);
+    const spanY = Math.max(maxY - minY, 0.001);
+    this.cx = (minX + maxX) / 2;
+    this.cy = (minY + maxY) / 2;
+    this.z = Math.max(10, Math.min(19, Math.log2(Math.min(
+      (v.W - padding * 2) / (spanX * 256),
+      (v.H - padding * 2) / (spanY * 256),
+    ))));
+    this.changed();
+    return true;
   }
 }
 
@@ -74,7 +101,7 @@ class MapView {
   get scale() { return 256 * 2 ** this.group.z; }
   X(wx) { return (wx - this.group.cx) * this.scale + this.W / 2; }
   Y(wy) { return (wy - this.group.cy) * this.scale + this.H / 2; }
-  px(id) { const n = World.nodes.get(id); return [this.X(n.wx), this.Y(n.wy)]; }
+  px(id) { const n = World.nodes.get(id) || World.stopsByNode.get(id); return [this.X(n.wx), this.Y(n.wy)]; }
 
   bind() {
     const c = this.canvas; let drag = null;
@@ -157,6 +184,7 @@ class MapView {
     b.strokeStyle = cssVar('--road'); b.globalAlpha = 0.7; b.lineWidth = 1.2; b.beginPath();
     for (const r of World.roads) if (r.u < r.v) this.tracePts(b, r);
     b.stroke(); b.globalAlpha = 1;
+    this.drawBusLayer(b);
     if (this.hooks.base) this.hooks.base(this, b);
     const m = World.meta;
     if (Layers.boundary && m.radius) this.circle(b, m.center, m.radius, '#2563eb');
@@ -194,6 +222,56 @@ class MapView {
       if (i) c.lineTo(x, y); else c.moveTo(x, y);
     }
   }
+  drawBusLayer(c) {
+    if (!World.bus) return;
+    const colors = { '207': '#e11d48', '306': '#7c3aed' };
+    c.save(); c.lineWidth = 3; c.lineCap = 'round'; c.lineJoin = 'round';
+    for (const route of World.bus.routes) {
+      const stops = route.stops;
+      if (stops.length > 1) {
+        c.strokeStyle = colors[route.route_no] || '#e11d48'; c.globalAlpha = 0.78;
+        c.beginPath();
+        stops.forEach((stop, i) => {
+          const [wx, wy] = mercator(stop.lat, stop.lon), x = this.X(wx), y = this.Y(wy);
+          if (i) c.lineTo(x, y); else c.moveTo(x, y);
+        });
+        c.stroke();
+      }
+      c.globalAlpha = 1;
+      for (const stop of stops) {
+        const [wx, wy] = mercator(stop.lat, stop.lon);
+        c.beginPath(); c.arc(this.X(wx), this.Y(wy), 3.5, 0, 7);
+        c.fillStyle = '#fff'; c.fill(); c.strokeStyle = colors[route.route_no] || '#e11d48'; c.lineWidth = 1.5; c.stroke();
+      }
+    }
+    c.restore();
+  }
+  drawBusMarkers(c) {
+    if (!World.bus) return;
+    c.save();
+    c.font = 'bold 12px system-ui, sans-serif';
+    c.textBaseline = 'middle';
+    for (const bus of World.bus.buses) {
+      const [wx, wy] = mercator(bus.lat, bus.lon);
+      const x = this.X(wx), y = this.Y(wy);
+      const label = String(bus.route_no || '');
+      const labelWidth = c.measureText(label).width + 12;
+      c.fillStyle = '#fff';
+      c.strokeStyle = '#111827';
+      c.lineWidth = 2.5;
+      c.beginPath(); c.arc(x, y, 11, 0, Math.PI * 2); c.fill(); c.stroke();
+      c.fillStyle = '#ffb000';
+      c.beginPath(); c.arc(x, y, 7.5, 0, Math.PI * 2); c.fill();
+      const lx = x + 12, ly = y - 18;
+      c.fillStyle = '#fff7cc';
+      c.strokeStyle = '#7c2d12';
+      c.lineWidth = 1.5;
+      c.beginPath(); c.rect(lx, ly - 9, labelWidth, 18); c.fill(); c.stroke();
+      c.fillStyle = '#7c2d12';
+      c.fillText(label, lx + 6, ly);
+    }
+    c.restore();
+  }
   circle(c, center, radius, color) {
     const [wx, wy] = mercator(center[0], center[1]);
     const r = radius / (40075016.7 * Math.cos(center[0] * Math.PI / 180)) * this.scale;
@@ -213,6 +291,7 @@ class MapView {
     c.setTransform(1, 0, 0, 1, 0, 0); c.drawImage(this.base, 0, 0);
     c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     if (this.hooks.overlay) this.hooks.overlay(this, c);
+    this.drawBusMarkers(c);
     this.dirty = false;
   }
 }

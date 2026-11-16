@@ -86,11 +86,30 @@ class TestOthers(Base):
     def test_every_algorithm_runs(self):
         s, t = self.g.default_endpoints()
         for algo in ALGORITHMS:
-            r = run_search(self.g, algo, s, t, alt=self.alt, waypoints=[100, 200, 300], budget=500)
+            options = dict(alt=self.alt, waypoints=[100, 200, 300], budget=500)
+            if algo in ("transit_dijkstra", "transit_astar"):
+                from time import time
+                first, last = self.g.coords[s], self.g.coords[t]
+                options["bus_feed"] = {
+                    "fetched_at": time(), "stops": [
+                        {"node_id": -1, "lat": first[0], "lon": first[1]},
+                        {"node_id": -2, "lat": last[0], "lon": last[1]},
+                    ],
+                    "routes": [{"route_id": "test", "route_no": "207", "stops": [
+                        {"node_id": -1, "lat": first[0], "lon": first[1], "sequence": 1},
+                        {"node_id": -2, "lat": last[0], "lon": last[1], "sequence": 2},
+                    ], "buses": []}],
+                }
+            r = run_search(self.g, algo, s, t, **options)
             self.assertGreater(r.expanded, 0, algo)
             self.assertIn(r.found, (True, False))
             if r.found:
-                self.assert_valid(r)
+                if algo in ("transit_dijkstra", "transit_astar"):
+                    self.assertEqual((r.path[0], r.path[-1]), (s, t))
+                    self.assertTrue(r.extra["service_ended"])
+                    self.assertEqual(r.extra["ride_distance_m"], 0)
+                else:
+                    self.assert_valid(r)
 
     def test_failure_has_null_cost(self):
         s, t = self.g.default_endpoints()
