@@ -34,6 +34,8 @@ const S = {
 const G = new ViewGroup(); G.needsFit = true;
 const algo = id => World.meta.algorithms.find(a => a.id === id);
 const VIA = new Set(['via', 'via_astar', 'via_weighted']);
+// '경유지' 구성을 고르면 쓰는 POSTECH 캠퍼스 시나리오 (data/road_nodes.csv의 정점 ID)
+const VIA_SCENARIO = { start: 655, goal: 3197, waypoints: [340, 3188, 7419] };
 const fmt = (v, d = 1) => v == null ? '—' : v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
 const setStatus = t => { $('status').textContent = t; };
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -398,9 +400,13 @@ function drawWaypoints(v, c, tr) {
   for (const id of S.waypoints) {
     if (!World.nodes.has(id)) continue;
     const [x, y] = v.px(id);
-    c.fillStyle = id === chosen ? '#ff7f0e' : '#ffd8a8'; c.strokeStyle = '#000'; c.lineWidth = 1;
-    c.beginPath(); c.arc(x, y, id === chosen ? 8 : 6, 0, 7); c.fill(); c.stroke();
-    c.fillStyle = '#7a3e00'; c.fillText((id === chosen ? 'W ' : '') + id, x + 9, y - 7);
+    c.fillStyle = '#ff7f0e'; c.strokeStyle = '#000'; c.lineWidth = 1;   // 후보는 모두 같은 주황색 큰 점
+    c.beginPath(); c.arc(x, y, 9, 0, 7); c.fill(); c.stroke();
+    if (id === chosen) {                                               // 선택된 후보는 점 안에 W
+      c.save(); c.fillStyle = '#fff'; c.font = '700 11px system-ui'; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText('W', x, y + 0.5); c.restore();
+    }
+    c.fillStyle = '#7a3e00'; c.fillText(id, x + 11, y - 8);
   }
 }
 
@@ -667,7 +673,21 @@ $('applyCoord').onclick = () => {
     setTimeout(() => setStatus(['start', 'goal'].filter(k => snap[k]).map(k => `${k === 'start' ? '출발' : '도착'} 좌표 → 정점 ${next[k]} (${snap[k].dist.toFixed(1)} m, 경로 합계에는 포함 안 함)`).join(' · ')), 400);
   } catch (e) { setStatus(e.message); }
 };
-$('preset').onchange = () => { S.panels = PRESETS[$('preset').value](); panelRows(); runPanels(); };
+function applyViaScenario() {
+  const { start, goal, waypoints } = VIA_SCENARIO, ids = [start, goal, ...waypoints];
+  if (!ids.every(id => World.nodes.has(id))) return;          // 다른 데이터셋이면 지금 값을 그대로 쓴다
+  S.snap = { start: null, goal: null };
+  S.start = start; S.goal = goal; $('start').value = start; $('goal').value = goal;
+  S.waypoints = [...waypoints]; $('waypoints').value = waypoints.join(' ');
+  S.hTable = null; S.compare = null; compareTable();
+  G.fitTarget = ids.map(id => World.nodes.get(id));          // 패널을 새로 만들 때 이 지점들이 꽉 차게 확대
+  G.needsFit = true;
+}
+$('preset').onchange = () => {
+  S.panels = PRESETS[$('preset').value]();
+  if ($('preset').value === 'via') applyViaScenario();
+  panelRows(); runPanels();
+};
 $('addPanel').onclick = () => { S.panels.push({ algorithm: 'astar', heuristic: 'haversine', weight: 1 }); panelsChanged(); };
 for (const id of ['beamWidth', 'budget', 'seed', 'noRevisit', 'walkKmh', 'driveKmh']) $(id).onchange = () => runPanels();
 $('waypoints').onchange = () => { S.waypoints = $('waypoints').value.trim().split(/[\s,]+/).filter(Boolean).map(Number); runPanels(); };

@@ -47,7 +47,7 @@ class ViewGroup {
   changed() { for (const v of this.views) { v.baseDirty = true; v.dirty = true; } }
   redraw() { for (const v of this.views) v.dirty = true; }
   fit() {
-    const v = [...this.views][0];
+    const v = [...this.views].find(x => x.W);
     if (!v || !v.W) return;
     let a = Infinity, b = -Infinity, c = Infinity, d = -Infinity;
     for (const n of World.nodes.values()) { a = Math.min(a, n.wx); b = Math.max(b, n.wx); c = Math.min(c, n.wy); d = Math.max(d, n.wy); }
@@ -55,15 +55,15 @@ class ViewGroup {
     this.z = Math.log2(Math.min((v.W - 40) / ((b - a) * 256), (v.H - 40) / ((d - c) * 256)));
     this.changed();
   }
-  fitPoints(points, padding = 72) {
-    const v = [...this.views][0];
+  fitPoints(points, padding = 72, minSpan = 0.001) {   // minSpan: 최소로 보여 줄 폭 (메르카토르 단위, 0.001 ≈ 30 km)
+    const v = [...this.views].find(x => x.W);
     if (!v || !v.W || !points.length) return false;
     const projected = points.map(point => mercator(point.lat, point.lon));
     const xs = projected.map(point => point[0]), ys = projected.map(point => point[1]);
     const minX = Math.min(...xs), maxX = Math.max(...xs);
     const minY = Math.min(...ys), maxY = Math.max(...ys);
-    const spanX = Math.max(maxX - minX, 0.001);
-    const spanY = Math.max(maxY - minY, 0.001);
+    const spanX = Math.max(maxX - minX, minSpan);
+    const spanY = Math.max(maxY - minY, minSpan);
     this.cx = (minX + maxX) / 2;
     this.cy = (minY + maxY) / 2;
     this.z = Math.max(10, Math.min(19, Math.log2(Math.min(
@@ -96,7 +96,10 @@ class MapView {
     this.W = r.width; this.H = r.height; this.dpr = devicePixelRatio || 1;
     for (const c of [this.canvas, this.base]) { c.width = Math.round(this.W * this.dpr); c.height = Math.round(this.H * this.dpr); }
     this.baseDirty = this.dirty = true;
-    if (first && this.group.needsFit) { this.group.needsFit = false; this.group.fit(); }
+    if (first && this.group.needsFit) {   // fitTarget이 있으면 그 지점들에, 없으면 전체 지도에 맞춘다
+      this.group.needsFit = false;
+      if (this.group.fitTarget) this.group.fitPoints(this.group.fitTarget, 48, 1e-5); else this.group.fit();   // 1e-5 ≈ 300 m
+    }
   }
   get scale() { return 256 * 2 ** this.group.z; }
   X(wx) { return (wx - this.group.cx) * this.scale + this.W / 2; }
