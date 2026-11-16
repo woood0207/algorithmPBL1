@@ -90,6 +90,7 @@ class Context:
     landmarks: list | None = None    # 업힐 회피 ALT: 랜드마크 ID (없으면 farthest 4개)
     stairs: float = 1.0              # 업힐 회피 ALT: 계단 간선 거리 배수 (1 = 벌점 없음)
     vehicle_state: VehicleState = field(default_factory=VehicleState)
+    bus_feed: dict | None = None
 
 @dataclass
 class Algorithm:
@@ -402,6 +403,31 @@ def vehicle_switch(c: Context):
     # Init
     g = c.graph
     vs = c.vehicle_state
+    center = c.drive_center or g.center
+    radius = float(c.drive_radius)
+    if not math.isfinite(radius) or radius < 0:
+        raise ValueError("차량 구역 반경은 유한한 0 이상의 값이어야 합니다.")
+    if center is None:
+        raise ValueError("차량 구역 중심 좌표가 없습니다.")
+    drive_nodes = {
+        node for node, coordinate in g.coords.items()
+        if haversine(*coordinate, *center) <= radius
+    }
+    roads_by_source = {}
+    for road in g.roads:
+        if road.u != road.v:
+            roads_by_source.setdefault(road.u, []).append(road)
+
+    def permits_drive(road):
+        if c.drive_rule == "edge":
+            return road.u in drive_nodes and road.v in drive_nodes
+        if c.drive_rule == "node":
+            return road.v in drive_nodes
+        raise ValueError(f"알 수 없는 차량 구역 간선 기준: {c.drive_rule}")
+
+    def permits_mode(road, vehicle):
+        return road.permits(vehicle) and (vehicle != Vehicle.DRIVE or permits_drive(road))
+
     minutes = lambda meters, kmh: ((meters / 1000) / kmh) * 60
     speeds = {}
     speeds[Vehicle.WALK] = c.walk_kmh
@@ -417,23 +443,24 @@ def vehicle_switch(c: Context):
             return 0.0
 
     cost = {(c.start, vs.initial_state): 0.0}          # true cost g
-    prev = {(c.start, vs.initial_state): None}
+    prev = {(c.start, vs.initial_state): None}         # (이전 정점, 이전 상태, 사용한 Road.id)
 
     heap = [(h_cost(c.start, vs.initial_state, vs.initial_state), c.start, vs.initial_state)]
 
-    def push_road_maybe(prev, cost, heap, g_time, u, u_state, v, v_state, step):
+    def push_road_maybe(prev, cost, heap, g_time, u, u_state, v, v_state, road, step):
         if g_time < cost.get((u, u_state), INF):
             cost[(u, u_state)] = g_time
-            prev[(u, u_state)] = (v, v_state)
+            prev[(u, u_state)] = (v, v_state, road.id)
             f_time = g_time + h_cost(u, v_state, u_state)
             heapq.heappush(heap, (f_time, u, u_state))
             step.pushed.append(u)
-            step.pushed_edges.append(g.edge_id[(v, u)])
+            step.pushed_edges.append(road.id)
 
     # Frontend
     trace = Trace(c.start, c.goal)
-    trace.cost_unit = "min"
-    trace.extra.update(walk_kmh=c.walk_kmh, drive_kmh=c.drive_kmh, drive_rule=c.drive_rule)
+    trace.cost_unit = "min"            # 비용 = 길이(m) ÷ 상태별 속도 (분)
+    trace.extra.update(walk_kmh=c.walk_kmh, drive_kmh=c.drive_kmh, drive_rule=c.drive_rule,
+                       drive_nodes=sorted(drive_nodes), drive_center=list(center), drive_radius=radius)
     end_state = None
     while heap:
         f, v, v_state = heapq.heappop(heap)
@@ -450,19 +477,19 @@ def vehicle_switch(c: Context):
             end_state = v_state
             break
 
-        for u, _ in g.neighbors(v):
-            road = g.roads[g.edge_id[(v, u)]]
+        for road in roads_by_source.get(v, ()):
+            u = road.v
             length = road.length_m
 
-            if road.permits(vs.vehicle[v_state]):
+            if permits_mode(road, vs.vehicle[v_state]):
                 u_state = v_state
                 total_time = time + minutes(length, speeds[vs.vehicle[u_state]])
-                push_road_maybe(prev, cost, heap, total_time, u, u_state, v, v_state, step)
+                push_road_maybe(prev, cost, heap, total_time, u, u_state, v, v_state, road, step)
 
             for u_state in vs.transitions[v_state]:
-                if road.permits(vs.vehicle[u_state]):
+                if permits_mode(road, vs.vehicle[u_state]):
                     total_time = time + minutes(length, speeds[vs.vehicle[u_state]])
-                    push_road_maybe(prev, cost, heap, total_time, u, u_state, v, v_state, step)
+                    push_road_maybe(prev, cost, heap, total_time, u, u_state, v, v_state, road, step)
 
     if end_state is None:
         return _finish(trace, g, False, [], reason="unreachable")
@@ -471,10 +498,11 @@ def vehicle_switch(c: Context):
     key = (c.goal, end_state)
     while key is not None:
         states.append(key)
-        key = prev[key]
+        previous = prev[key]
+        key = (previous[0], previous[1]) if previous is not None else None
     states.reverse()
     path = [v for v, _ in states]
-    edge_ids = g.path_edges(path)
+    edge_ids = [prev[state][2] for state in states[1:]]
     _finish(trace, g, True, path, edge_ids, cost=cost[(c.goal, end_state)])
 
     names = {"0": "walk1", "1": "drive", "2": "walk2"}
@@ -489,6 +517,215 @@ def vehicle_switch(c: Context):
     trace.segments = groups
     trace.extra["distance_m"] = sum(x["meters"] for x in groups)
     return trace
+
+
+def time_dependent_transit(c: Context, use_astar=False):
+    """Road-walking plus bus routing; each boarding cost depends on arrival time at that stop."""
+    from bus_api import estimate_bus_arrivals
+
+    graph, feed = c.graph, c.bus_feed
+    if not feed or not feed.get("routes"):
+        raise ValueError("실시간 포항시 버스 데이터가 없습니다. API 연결 상태를 확인하세요.")
+    walk_kmh = float(c.walk_kmh)
+    if not math.isfinite(walk_kmh) or walk_kmh <= 0:
+        raise ValueError("도보 속도는 유한한 양수여야 합니다.")
+
+    stops = {stop["node_id"]: stop for stop in feed["stops"]}
+    coords = dict(graph.coords)
+    coords.update({node: (stop["lat"], stop["lon"]) for node, stop in stops.items()})
+    snap_limit = float(getattr(c, "stop_snap_m", 500.0))
+    connector = {}
+    for stop_id, stop in stops.items():
+        road_node = min(graph.coords, key=lambda node: haversine(
+            stop["lat"], stop["lon"], *graph.coords[node]))
+        distance = haversine(stop["lat"], stop["lon"], *graph.coords[road_node])
+        if distance <= snap_limit:
+            connector[stop_id] = (road_node, distance)
+
+    route_by_stop = {}
+    live_arrivals = {}
+    route_speeds = {}
+    service_ended = bool(feed.get("service_ended")) or not any(
+        route.get("buses") for route in feed["routes"])
+    status = {"last_bus_missed": False}
+    for route in feed["routes"]:
+        route_stops = route["stops"]
+        route_by_stop.update({stop["node_id"]: route for stop in route_stops})
+        live_arrivals.update(estimate_bus_arrivals(route, route["buses"]))
+        speeds = [bus["speed_kmh"] for bus in route["buses"] if bus.get("speed_kmh") and bus["speed_kmh"] > 0]
+        route_speeds[route["route_id"]] = min(80.0, max(10.0, sum(speeds) / len(speeds))) if speeds else 25.0
+
+    walk_mps = walk_kmh / 3.6
+    feed_age = max(0.0, time.time() - float(feed.get("fetched_at", time.time())))
+    start_clock = time.perf_counter()
+    tie = itertools.count()
+    best = {c.start: 0.0}
+    parent = {c.start: None}
+    closed = set()
+    trace = Trace(c.start, c.goal)
+    trace.cost_unit = "초"
+    trace.extra.update(
+        basis="시간 의존 도보·버스 이동 시간(초) · 실시간 위치 기반 대기 및 탑승 시간",
+        feed_age_s=feed_age, stop_snap_m=snap_limit,
+        service_ended=service_ended,
+        service_message="현재 운행 중인 버스가 없습니다 (운행 종료)" if service_ended else None,
+        last_bus_missed=False,
+    )
+
+    max_speed_mps = 80.0 / 3.6
+
+    def heuristic(node):
+        if not use_astar:
+            return 0.0
+        return haversine(*coords[node], *coords[c.goal]) / max_speed_mps
+
+    def walk_edges(node):
+        if node in graph.coords:
+            for neighbor, _ in graph.neighbors(node):
+                road = graph.roads[graph.edge_id[(node, neighbor)]]
+                if road.permissions and not road.permits(Vehicle.WALK):
+                    continue
+                yield neighbor, road.length_m / walk_mps, {
+                    "kind": "walk", "edge_id": road.id, "distance_m": road.length_m,
+                    "coordinates": road.coords or [graph.coords[node], graph.coords[neighbor]],
+                }
+            for stop_id, (road_node, distance) in connector.items():
+                if road_node == node:
+                    yield stop_id, distance / walk_mps, {
+                        "kind": "walk", "distance_m": distance,
+                        "coordinates": [graph.coords[node], coords[stop_id]],
+                    }
+        elif node in connector:
+            road_node, distance = connector[node]
+            yield road_node, distance / walk_mps, {
+                "kind": "walk", "distance_m": distance,
+                "coordinates": [coords[node], graph.coords[road_node]],
+            }
+
+    def bus_edges(node, elapsed):
+        route = route_by_stop.get(node)
+        if route is None:
+            return
+        route_stops = route["stops"]
+        index = next(i for i, stop in enumerate(route_stops) if stop["node_id"] == node)
+        now_elapsed = elapsed
+        arrivals = [arrival - feed_age for arrival in live_arrivals.get(node, [])]
+        upcoming = [arrival for arrival in arrivals if arrival >= now_elapsed]
+        if not upcoming:
+            if route["buses"]:
+                status["last_bus_missed"] = True
+            return
+        wait_s = min(upcoming) - now_elapsed
+        speed_mps = route_speeds[route["route_id"]] / 3.6
+        distance = 0.0
+        for downstream_index in range(index + 1, len(route_stops)):
+            previous = route_stops[downstream_index - 1]
+            downstream = route_stops[downstream_index]
+            distance += haversine(previous["lat"], previous["lon"], downstream["lat"], downstream["lon"])
+            yield downstream["node_id"], wait_s + distance / speed_mps, {
+                "kind": "bus", "route_no": route["route_no"], "route_id": route["route_id"],
+                "from_stop": node, "to_stop": downstream["node_id"], "wait_s": wait_s,
+                "ride_s": distance / speed_mps, "distance_m": distance,
+                "stop_ids": [stop["node_id"] for stop in route_stops[index:
+                    downstream_index + 1]],
+            }
+
+    open_heap = [(heuristic(c.start), 0.0, next(tie), c.start)]
+    while open_heap:
+        _, elapsed, _, node = heapq.heappop(open_heap)
+        if elapsed != best.get(node) or node in closed:
+            continue
+        closed.add(node)
+        previous = parent[node]
+        step = Step(len(trace.steps), node, elapsed, heuristic(node), elapsed + heuristic(node),
+                    previous[0] if previous else None)
+        trace.steps.append(step)
+        if node == c.goal:
+            break
+        transitions = list(walk_edges(node))
+        transitions.extend(bus_edges(node, elapsed) or ())
+        for neighbor, cost_s, transition in transitions:
+            candidate = elapsed + cost_s
+            if candidate >= best.get(neighbor, INF):
+                continue
+            best[neighbor] = candidate
+            parent[neighbor] = (node, transition)
+            if neighbor in closed:
+                closed.remove(neighbor)
+            heapq.heappush(open_heap, (candidate + heuristic(neighbor), candidate, next(tie), neighbor))
+            step.pushed.append(neighbor)
+            if transition.get("edge_id") is not None:
+                step.pushed_edges.append(transition["edge_id"])
+
+    if c.goal not in best:
+        _finish(trace, graph, False, [], edge_ids=[], reason="unreachable")
+        trace.extra.update(last_bus_missed=status["last_bus_missed"])
+        return trace
+
+    path, transitions = [], []
+    node = c.goal
+    while node is not None:
+        path.append(node)
+        previous = parent[node]
+        if previous is not None:
+            node, transition = previous
+            transitions.append(transition)
+        else:
+            node = None
+    path.reverse()
+    transitions.reverse()
+    trace.path = path
+    trace.edge_ids = [item["edge_id"] for item in transitions if item.get("edge_id") is not None]
+    trace.found = True
+    trace.cost = best[c.goal]
+    trace.reason = None
+
+    segments, walk_segment = [], None
+    walk_s, wait_s, ride_s = 0.0, 0.0, 0.0
+    walk_distance_m, ride_distance_m = 0.0, 0.0
+    for transition in transitions:
+        if transition["kind"] == "walk":
+            duration = transition["distance_m"] / walk_mps
+            walk_s += duration
+            walk_distance_m += transition["distance_m"]
+            if walk_segment is None:
+                walk_segment = {"kind": "walk", "edge_ids": [], "coordinates": [], "walk_s": 0.0}
+                segments.append(walk_segment)
+            if transition.get("edge_id") is not None:
+                walk_segment["edge_ids"].append(transition["edge_id"])
+            points = transition["coordinates"]
+            if walk_segment["coordinates"] and points and walk_segment["coordinates"][-1] == points[0]:
+                points = points[1:]
+            walk_segment["coordinates"].extend(points)
+            walk_segment["walk_s"] += duration
+        else:
+            walk_segment = None
+            wait_s += transition["wait_s"]
+            ride_s += transition["ride_s"]
+            ride_distance_m += transition["distance_m"]
+            segments.append({
+                "kind": "bus", "route_no": transition["route_no"], "route_id": transition["route_id"],
+                "stop_ids": transition["stop_ids"], "wait_s": transition["wait_s"],
+                "ride_s": transition["ride_s"],
+                "coordinates": [(coords[stop_id][0], coords[stop_id][1])
+                                for stop_id in transition["stop_ids"]],
+            })
+    trace.segments = segments
+    trace.extra.update(walk_s=walk_s, wait_s=wait_s, ride_s=ride_s,
+                       walk_distance_m=walk_distance_m, ride_distance_m=ride_distance_m,
+                       total_minutes=trace.cost / 60.0,
+                       last_bus_missed=status["last_bus_missed"])
+    trace.elapsed_ms = (time.perf_counter() - start_clock) * 1000
+    return trace
+
+
+def transit_dijkstra(c):
+    return time_dependent_transit(c)
+
+
+def transit_astar(c):
+    return time_dependent_transit(c, use_astar=True)
+
 
 def walk_drive_walk(c: Context):
     c.vehicle_state = VehicleState.from_list([Vehicle.WALK, Vehicle.DRIVE, Vehicle.WALK])
@@ -570,6 +807,12 @@ register_algorithm("via", "경유지 Dijkstra", shortest_via, comparable=False, 
                    hint="출발·도착에서 Dijkstra 2회 · 후보 중 총거리 최소인 경유지 선택")
 register_algorithm("vehicle_switch", "도보-차량-도보", vehicle_switch, uses_heuristic=True, comparable=False, default_heuristic="zero",
                    hint="상태 3개짜리 Dijkstra · 이동 시간(분) 최소")
+register_algorithm("transit_dijkstra", "실시간 버스 Dijkstra", transit_dijkstra, comparable=False,
+                   default_heuristic="zero",
+                   hint="정류장 도착 시각마다 실시간 버스 도착·배차 대기를 다시 계산하는 최적 탐색")
+register_algorithm("transit_astar", "실시간 버스 A*", transit_astar, uses_heuristic=True, comparable=False,
+                   default_heuristic="haversine",
+                   hint="시간 의존 버스 대기·탑승을 반영하는 A* · 직선거리/80km/h 하한")
 register_algorithm("alt_uphill", "ALT 업힐 회피", alt_uphill, comparable=False, default_heuristic="zero",
                    hint="간선 비용 = 거리(계단은 ×s) + λ × 오르막(m) · ALT 표도 이 비용으로 계산 · 지도: 주황=경사 3%↑ 도로, 보라 점선=계단, 경로 분홍=오르막 검정=계단 파랑=평지·내리막")
 

@@ -22,6 +22,7 @@ const PRESETS = {
   greedy: () => ['greedy', 'beam', 'local', 'random'].map(a => ({ algorithm: a, heuristic: 'geo' })),
   bfs: () => [{ algorithm: 'bfs' }, { algorithm: 'bidirectional' }],
   wdw: () => [{ algorithm: 'vehicle_switch' }],
+  transit: () => [{ algorithm: 'transit_dijkstra' }, { algorithm: 'transit_astar', heuristic: 'haversine' }],
   via: () => [{ algorithm: 'via' }],
   uphill: () => [{ algorithm: 'astar', heuristic: 'alt' }, { algorithm: 'alt_uphill', uphill: 8 }, { algorithm: 'alt_uphill', uphill: 8, stairs: 3 }],
 };
@@ -56,8 +57,125 @@ async function runPanels({ jumpEnd = false } = {}) {
     S.fromFile = false;
     showTraces(data.traces, jumpEnd);
     setStatus('');
+    refreshRouteComparison(token);
     refreshHeuristicTable();
   } catch (e) { if (token === S.token) setStatus(e.message); }
+}
+
+function durationLabel(seconds) {
+  if (seconds == null || !Number.isFinite(seconds)) return '경로 없음';
+  const total = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(total / 60), remainder = total % 60;
+  return minutes ? `${minutes}분 ${remainder}초` : `${remainder}초`;
+}
+
+async function refreshRouteComparison(token) {
+  const box = $('routeCompare');
+  box.hidden = false;
+  $('routeDelta').hidden = true;
+  $('busServiceBadge').hidden = true;
+  $('routeCompareError').hidden = true;
+  $('busCompareTime').hidden = false;
+  $('busCompareTime').classList.remove('route-state');
+  $('walkCompareTime').textContent = '계산 중…';
+  $('walkCompareDistance').textContent = '이동 거리 계산 중';
+  $('busCompareTime').textContent = '계산 중…';
+  $('busCompareDistance').textContent = '이동 거리 계산 중';
+  $('busCompareDetails').textContent = '정류장 및 버스 시간 계산 중…';
+  try {
+    const result = await api('/api/route-comparison', {
+      start: S.start, goal: S.goal, options: { walk_kmh: options().walk_kmh },
+    });
+    if (token !== S.token) return;
+    $('walkCompareTime').textContent = result.walking ? durationLabel(result.walking.time_s) : '도보 경로 없음';
+    $('walkCompareDistance').textContent = result.walking
+      ? `총 이동 거리 ${fmt(result.walking.distance_m, 0)} m` : '연결된 도보 경로를 찾지 못했습니다.';
+    $('busCompareTime').textContent = result.transit ? durationLabel(result.transit.time_s) : '버스 경로 없음';
+    $('busCompareDistance').textContent = result.transit
+      ? `도보 ${fmt(result.transit.walk_distance_m, 0)} m · 버스 ${fmt(result.transit.ride_distance_m, 0)} m`
+      : '정류장에 연결되는 경로가 없습니다.';
+    if (result.transit_error) {
+      $('routeCompareError').textContent = `실시간 버스 비교 오류: ${result.transit_error}`;
+      $('routeCompareError').hidden = false;
+    }
+    const details = $('busCompareDetails');
+    details.replaceChildren();
+    if (result.service_ended || (result.transit && result.transit.service_ended)) {
+      $('busServiceBadge').textContent = '운행 종료 (막차 마감)';
+      $('busServiceBadge').hidden = false;
+      $('busCompareTime').hidden = true;
+      $('busCompareDistance').textContent = '';
+      const warning = document.createElement('span');
+      warning.className = 'route-warning';
+      warning.textContent = '현재 운행 중인 207·306번 차량이 없어 도보 이동을 권장합니다.';
+      details.append(warning);
+      $('routeDelta').hidden = true;
+      return;
+    }
+    if (result.transit) {
+      const noRide = result.transit.ride_distance_m <= 0 || !result.transit.buses.length;
+      if (noRide) {
+        $('busCompareTime').textContent = result.last_bus_missed || result.transit.last_bus_missed
+          ? '막차 통과 (버스 탑승 불가)'
+          : '도보 이동이 더 빠름 (버스 미탑승)';
+        $('busCompareTime').classList.add('route-state');
+        $('busCompareDistance').textContent = result.last_bus_missed || result.transit.last_bus_missed
+          ? '도착 시각 이후 운행 중인 버스가 없습니다.'
+          : '이 경로의 버스 이동 거리 0 m';
+        const message = document.createElement('span');
+        message.textContent = result.last_bus_missed || result.transit.last_bus_missed
+          ? '정류장 도착 시각 이후 도착할 버스가 없어 도보 이동을 권장합니다.'
+          : '가까운 경로는 버스를 타지 않고 도보로 이동합니다.';
+        details.append(message);
+        $('routeDelta').hidden = true;
+        return;
+      }
+      const addLine = text => {
+        const line = document.createElement('span');
+        line.textContent = text;
+        details.append(line);
+      };
+      addLine(`정류장까지 도보 ${durationLabel(result.transit.access_walk_s)}`);
+      result.transit.buses.forEach((bus, index) => {
+        const route = /^\d+$/.test(String(bus.route_no)) ? `${bus.route_no}번` : '버스';
+        addLine(`버스 대기 ${durationLabel(bus.wait_s)} [${route}]`);
+        addLine(`버스 탑승 ${durationLabel(bus.ride_s)} [${route}]`);
+        const transferWalk = result.transit.transfer_walks_s[index] || 0;
+        if (index < result.transit.buses.length - 1 && transferWalk > 0) {
+          addLine(`환승 도보 ${durationLabel(transferWalk)}`);
+        }
+      });
+      addLine(`하차 후 도보 ${durationLabel(result.transit.egress_walk_s)}`);
+      const delta = $('routeDelta');
+      if (result.delta_s != null) {
+        delta.textContent = result.delta_s >= 0
+          ? `도보보다 ${durationLabel(result.delta_s)} 단축`
+          : `도보보다 ${durationLabel(-result.delta_s)} 지연`;
+        delta.classList.toggle('delayed', result.delta_s < 0);
+        delta.hidden = false;
+      }
+    } else {
+      if (result.last_bus_missed) {
+        $('busCompareTime').textContent = '막차 통과 (버스 탑승 불가)';
+        $('busCompareTime').classList.add('route-state');
+        $('busCompareDistance').textContent = '도착 시각 이후 운행 중인 버스가 없습니다.';
+        details.textContent = '정류장 도착 시각 이후 도착할 버스가 없어 도보 이동을 권장합니다.';
+      } else {
+        details.textContent = result.transit_error
+          ? '버스 데이터 오류로 대중교통 경로를 계산하지 못했습니다.'
+          : '실시간 버스 경로를 찾지 못했습니다.';
+      }
+    }
+  } catch (error) {
+    if (token !== S.token) return;
+    $('busCompareTime').textContent = '비교 불가';
+    $('busCompareTime').hidden = false;
+    $('busCompareTime').classList.remove('route-state');
+    $('busCompareDistance').textContent = '';
+    $('busCompareDetails').textContent = '';
+    $('routeCompareError').textContent = `실시간 버스 비교 오류: ${error.message}`;
+    $('routeCompareError').hidden = false;
+  }
 }
 
 function showTraces(traces, jumpEnd) {
@@ -213,7 +331,11 @@ function drawTrace(v, c, tr) {
   if (f.moved.length && !f.finished) v.strokeRoads(c, f.moved, '#f4b56b', 3);
 
   if (f.finished) {
-    if (tr.segments && tr.segments.length) {
+    if (tr.algorithm === 'transit_dijkstra' || tr.algorithm === 'transit_astar') {
+      for (const seg of tr.segments || []) {
+        drawCoordinatePath(v, c, seg.coordinates, seg.kind === 'bus' ? '#7c3aed' : '#e11d48', 4.5);
+      }
+    } else if (tr.segments && tr.segments.length) {
       for (const seg of tr.segments) { v.strokeRoads(c, seg.edge_ids, SEGMENT[seg.kind], 4.5); drawArrows(v, c, seg.edge_ids, '#fff'); }
     } else if (tr.edge_ids && tr.edge_ids.length) {
       v.strokeRoads(c, tr.edge_ids, tr.found ? '#d62728' : '#f4b56b', 4.5, tr.found ? null : [7, 6]);
@@ -258,6 +380,17 @@ function drawTrace(v, c, tr) {
     const state = f.finished ? (tr.found ? `cost ${fmt(tr.cost)} ${unit}` : (FAIL[tr.reason] || '실패')) : cur ? `g=${cur.g.toFixed(0)} f=${cur.f.toFixed(0)}` : '대기';
     entry.line.textContent = `expanded ${f.n}/${tr.steps.length} | ${state} | events ${f.events}`;
   }
+}
+
+function drawCoordinatePath(v, c, coordinates, color, width) {
+  if (!coordinates || coordinates.length < 2) return;
+  c.save(); c.strokeStyle = color; c.lineWidth = width; c.lineCap = 'round'; c.lineJoin = 'round';
+  c.beginPath();
+  coordinates.forEach(([lat, lon], i) => {
+    const [wx, wy] = mercator(lat, lon), x = v.X(wx), y = v.Y(wy);
+    if (i) c.lineTo(x, y); else c.moveTo(x, y);
+  });
+  c.stroke(); c.restore();
 }
 
 function drawLandmarks(v, c, tr) {
@@ -426,6 +559,12 @@ function panelTable() {
 function detailBlock() {
   let h = '';
   for (const t of S.traces) {
+    if (t.algorithm === 'transit_dijkstra' || t.algorithm === 'transit_astar') {
+      const x = t.extra;
+      if (t.found) h += `<p><b>${t.label}</b> 도보 ${fmt(x.walk_s / 60, 2)}분 + 실제 버스 대기 ${fmt(x.wait_s / 60, 2)}분 + 탑승 ${fmt(x.ride_s / 60, 2)}분 = <b>${fmt(x.total_minutes, 2)}분</b><br>` +
+        t.segments.filter(s => s.kind === 'bus').map(s => `${s.route_no}번 버스 (${fmt(s.wait_s / 60, 2)}분 대기 + ${fmt(s.ride_s / 60, 2)}분 탑승)`).join(' → ') + '</p>';
+      else h += `<p><b>${t.label}</b>: 경로를 찾지 못했습니다. 정류장 연결 거리 또는 버스 API 응답을 확인하세요.</p>`;
+    }
     if (t.algorithm === 'vehicle_switch' && t.found) {
       h += `<p><b>${t.label}</b> 총 ${fmt(t.cost, 2)} ${unitName(t.cost_unit)} · 도로 ${fmt(t.extra.distance_m)} m` + (t.extra.drive_nodes ? ` · 차량 구역 정점 ${t.extra.drive_nodes.length}개` : '') + '<br>' + t.segments.map(s => `${SEGMENT_NAME[s.kind]} ${fmt(s.meters)} m, ${fmt(s.minutes, 2)}분`).join(' → ') + '</p>';
     }
@@ -578,6 +717,14 @@ async function init() {
   try { meta = await api('/api/meta'); }
   catch (e) { setStatus('서버에 연결할 수 없습니다. python main.py 로 실행한 뒤 표시되는 주소로 접속하세요.'); return; }
   loadWorld(meta);
+  await refreshBusData();
+  setInterval(refreshBusData, 30000);
+  $('refreshBus').addEventListener('click', refreshLiveBus);
+  $('refreshBusCompare').addEventListener('click', refreshLiveBus);
+  $('focusBuses').addEventListener('click', () => {
+    if (!World.bus || !World.bus.buses.length) return;
+    G.fitPoints(World.bus.buses);
+  });
   S.zone = { lat: meta.center[0], lon: meta.center[1] };
   $('counts').textContent = `${meta.stats.nodes.toLocaleString()}개 정점 · ${meta.stats.csv_rows.toLocaleString()}개 방향 간선` + (meta.network_type ? ` · ${meta.network_type}` : '') + ` · 비용 단위: ${meta.weight_unit === 's' ? '이동 시간(초)' : '거리(m)'}`;
   $('counts').title = '간선 비용: ' + meta.basis;
@@ -588,5 +735,47 @@ async function init() {
   requestAnimationFrame(ts => { S.last = ts; tick(ts); });
   await pickLandmarks(0);
   Analysis.init();
+}
+function setBusUpdated(fetchedAt) {
+  const label = fetchedAt
+    ? `${new Date(fetchedAt * 1000).toLocaleTimeString('en-GB', {
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    })} 기준`
+    : '갱신 시각 확인 불가';
+  $('busUpdated').textContent = label;
+  $('compareBusUpdated').textContent = label;
+}
+
+async function refreshBusData(forceRefresh = false) {
+  try {
+    const buses = await api(forceRefresh ? '/api/bus?force_refresh=true' : '/api/bus');
+    setBusData(buses);
+    setBusUpdated(buses.fetched_at);
+    $('focusBuses').disabled = !buses.buses.length;
+    const state = buses.service_ended
+      ? '운행 종료 (활성 차량 없음)'
+      : `실시간 차량 ${buses.buses.length}대`;
+    $('busStatus').textContent = `포항 207·306번 · 정류장 ${buses.stops.length}개 · ${state}`;
+    return true;
+  } catch (e) {
+    $('busStatus').textContent = `버스 API 오류: ${e.message}`;
+    return false;
+  }
+}
+async function refreshLiveBus() {
+  const buttons = [$('refreshBus'), $('refreshBusCompare')];
+  buttons.forEach(button => { button.disabled = true; button.textContent = '새로고침 중…'; });
+  try {
+    if (await refreshBusData(true) && S.start != null && S.goal != null) {
+      await runPanels();
+    } else {
+      $('routeCompareError').textContent = '실시간 위치를 갱신하지 못했습니다. 표시된 위치의 갱신 시각을 확인하세요.';
+      $('routeCompareError').hidden = false;
+    }
+  } finally {
+    $('refreshBus').textContent = '실시간 위치 새로고침';
+    $('refreshBusCompare').textContent = '실시간 위치 새로고침';
+    buttons.forEach(button => { button.disabled = false; });
+  }
 }
 addEventListener('load', init);

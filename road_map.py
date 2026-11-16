@@ -146,7 +146,7 @@ def select_endpoint(nodes, node_id, coordinate, label, max_snap):
     return {"id": node_id, "input_coordinate": list(coordinate), "snap_distance_m": distance}
 
 
-def map_html(nodes, edges, output, center=None, radius=None, result=None, drive_nodes=None):
+def map_html(nodes, edges, output, center=None, radius=None, result=None, drive_nodes=None, bus_data=None):
     """실제 도로 모양과 새 정점 ID, 선택한 경로를 지도 위에 표시합니다."""
     import folium
     from branca.element import Element
@@ -178,6 +178,23 @@ def map_html(nodes, edges, output, center=None, radius=None, result=None, drive_
             html=f'<span style="font:bold 12px system-ui;background:#fffd;padding:1px 3px">{node}</span>')).add_to(labels)
     vertices.add_to(view)
     labels.add_to(view)
+    if bus_data:
+        route_colors = {"207": "#e11d48", "306": "#7c3aed"}
+        for route in bus_data.get("routes", []):
+            route_stops = route.get("stops", [])
+            color = route_colors.get(str(route.get("route_no")), "#e11d48")
+            if len(route_stops) > 1:
+                folium.PolyLine([(stop["lat"], stop["lon"]) for stop in route_stops],
+                                color=color, weight=5, opacity=.8,
+                                tooltip=f'{route["route_no"]}번 버스 노선').add_to(view)
+            for stop in route_stops:
+                folium.CircleMarker((stop["lat"], stop["lon"]), radius=4, color=color,
+                                    fill=True, fill_color="white", fill_opacity=1,
+                                    tooltip=f'{route["route_no"]}번 · {stop["name"]}').add_to(view)
+        for bus in bus_data.get("buses", []):
+            folium.CircleMarker((bus["lat"], bus["lon"]), radius=7, color="#15803d",
+                                fill=True, fill_color="#22c55e", fill_opacity=1,
+                                tooltip=f'실시간 버스 · {bus["bus_id"]}').add_to(view)
     if center is not None and radius is not None:
         folium.Circle(center, radius=radius, color="#2563eb", weight=1, fill=False,
                       dash_array="5", tooltip=f"추출 중심 · 반경 {radius:g}m").add_to(view)
@@ -185,10 +202,18 @@ def map_html(nodes, edges, output, center=None, radius=None, result=None, drive_
     if result is not None:
         route = folium.FeatureGroup(name="최단 경로")
         kinds = {row: seg["kind"] for seg in result.get("route_segments", []) for row in seg["edge_rows"]}
-        for step, row in enumerate(result["edge_rows"], 1):
-            edge = edges[row - 1]
-            folium.PolyLine(edge.coordinates, color=ROUTE_COLOR.get(kinds.get(row), "#f97316"), weight=7, opacity=.95,
-                            tooltip=f"{step}번째: {edge.source} → {edge.target} · {edge.weight:.2f}m").add_to(route)
+        if result.get("algorithm", "").startswith("실시간 버스"):
+            for segment in result.get("route_segments", []):
+                if segment.get("coordinates"):
+                    color = "#7c3aed" if segment["kind"] == "bus" else "#e11d48"
+                    folium.PolyLine(segment["coordinates"], color=color, weight=7, opacity=.95,
+                                    tooltip=(f'{segment.get("route_no", "")}번 버스' if segment["kind"] == "bus"
+                                             else "도보")).add_to(route)
+        else:
+            for step, row in enumerate(result["edge_rows"], 1):
+                edge = edges[row - 1]
+                folium.PolyLine(edge.coordinates, color=ROUTE_COLOR.get(kinds.get(row), "#f97316"), weight=7, opacity=.95,
+                                tooltip=f"{step}번째: {edge.source} → {edge.target} · {edge.weight:.2f}m").add_to(route)
         route.add_to(view)
         for key, label, color in [("start", "출발", "green"), ("end", "도착", "red")]:
             selection = result[key]
@@ -208,9 +233,11 @@ def map_html(nodes, edges, output, center=None, radius=None, result=None, drive_
                           icon=folium.Icon(color="orange", icon="flag")).add_to(view)
         message = (f'<b>{result["start"]["id"]} → {result["end"]["id"]}</b> · {result["algorithm"]}<br>'
                    f'<strong style="font-size:22px">{result["cost"]:,.2f} {result["cost_unit"]}</strong><br>'
-                   '<div style="max-height:100px;overflow:auto;overflow-wrap:anywhere;margin:8px 0">'
+                   + (f'도보 {result["walk_s"] / 60:.2f}분 + 실제 대기 {result["wait_s"] / 60:.2f}분 '
+                      f'+ 탑승 {result["ride_s"] / 60:.2f}분<br>' if "walk_s" in result else "")
+                   + '<div style="max-height:100px;overflow:auto;overflow-wrap:anywhere;margin:8px 0">'
                    + " → ".join(map(str, result["path"])) + "</div>"
-                   '<small>입력 좌표와 도로 정점 사이 거리는 합계에서 제외합니다.</small>')
+                   + '<small>입력 좌표와 도로 정점 사이 거리는 합계에서 제외합니다.</small>')
     folium.LayerControl(collapsed=False).add_to(view)
     coordinates = list(nodes.values())
     view.fit_bounds([[min(p[0] for p in coordinates), min(p[1] for p in coordinates)],

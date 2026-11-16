@@ -32,6 +32,30 @@ main[hidden] { display: none; }
 aside { display: grid; gap: 10px; }
 aside section, .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
 .content { display: grid; gap: 10px; min-width: 0; }
+.bus-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0; }
+.bus-controls button, .route-compare-actions button { font-size: 11px; padding: 5px 7px; }
+.bus-updated { color: var(--muted); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.route-compare-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.route-compare { border-color: #b7c8e8; }
+.route-compare-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+.route-compare-heading h2 { font-size: 15px; margin: 0; }
+.route-compare-heading .hint { margin-top: 2px; }
+.route-compare-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.route-card { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: var(--field); }
+.route-card h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 13px; }
+.route-icon { display: inline-grid; place-items: center; min-width: 38px; height: 24px; padding: 0 6px; border-radius: 99px; color: #fff; background: #e11d48; font-size: 11px; }
+.transit-card .route-icon { background: #15803d; }
+.route-total { display: block; font-size: clamp(20px, 2.4vw, 28px); line-height: 1.25; font-variant-numeric: tabular-nums; }
+.route-distance { margin-top: 4px; color: var(--muted); font-size: 12px; }
+.route-itinerary { display: grid; gap: 3px; margin-top: 10px; font-size: 12px; }
+.route-itinerary span { display: block; }
+.route-delta { flex: 0 0 auto; border-radius: 99px; padding: 6px 11px; background: #dcfce7; color: #166534; font-size: 12px; font-weight: 700; }
+.route-delta.delayed { background: #fee2e2; color: #991b1b; }
+.route-service-badge { border-radius: 99px; padding: 3px 8px; background: #fee2e2; color: #991b1b; font-size: 11px; font-weight: 700; }
+.route-service-badge:not([hidden]) { display: inline-block; }
+.transit-card .route-state { font-size: 16px; }
+.transit-card .route-warning { color: #991b1b; font-weight: 600; }
+.route-compare-error { color: #b42318; margin: 9px 0 0; font-size: 12px; }
 .wide-content { max-width: 1400px; width: 100%; margin: 0 auto; }
 label { display: block; font-size: 12px; color: var(--muted); margin: 6px 0; }
 label.check { display: flex; gap: 6px; align-items: center; color: var(--text); margin: 3px 0; }
@@ -117,4 +141,8 @@ h2 select { display: inline-block; width: auto; margin-left: 8px; font-weight: 4
   main { grid-template-columns: minmax(0, 1fr); padding: 8px; }
   .panels { grid-template-columns: minmax(0, 1fr); }
   .playbar { position: static; }
+}
+@media (max-width: 560px) {
+  .route-compare-cards { grid-template-columns: minmax(0, 1fr); }
+  .route-compare-heading { flex-direction: column; }
 }
