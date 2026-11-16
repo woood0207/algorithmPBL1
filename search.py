@@ -396,49 +396,53 @@ def shortest_via(c):
 
 
 # ---------------------------------------------------------------- walk drive walk
-# def drive_zone(roads: List[Road]):
-#     uniq = set()
-#     for r in filter(lambda r: r.permits(Vehicle.DRIVE), roads):
-#         uniq.add(r.u)
-#         uniq.add(r.v)
-#     return list(uniq)
 
 def vehicle_switch(c: Context):
     c.vehicle_state = VehicleState.from_list([Vehicle.WALK, Vehicle.DRIVE, Vehicle.WALK])
-    
     # Init
     g = c.graph
     vs = c.vehicle_state
     minutes = lambda meters, kmh: ((meters / 1000) / kmh) * 60
-    cost = {(c.start, vs.initial_state): 0.0}
-    prev = {(c.start, vs.initial_state): None}
-
-
-    heap = [(0.0, c.start, vs.initial_state)]
     speeds = {}
     speeds[Vehicle.WALK] = c.walk_kmh
     speeds[Vehicle.DRIVE] = c.drive_kmh
 
-    def push_road_maybe(prev, cost, heap, time, u, u_state, v, v_state, step):
-        if time < cost.get((u, u_state), INF):
-            cost[(u, u_state)] = time
+    def h_cost(u, v_state, u_state):
+        multiplier = 1.0
+        if v_state != u_state:
+            multiplier = 2
+        if c.h:
+            return c.weight * minutes(c.h(u), speeds[vs.vehicle[u_state]]) * multiplier
+        else:
+            return 0.0
+
+    cost = {(c.start, vs.initial_state): 0.0}          # true cost g
+    prev = {(c.start, vs.initial_state): None}
+
+    heap = [(h_cost(c.start, vs.initial_state, vs.initial_state), c.start, vs.initial_state)]
+
+    def push_road_maybe(prev, cost, heap, g_time, u, u_state, v, v_state, step):
+        if g_time < cost.get((u, u_state), INF):
+            cost[(u, u_state)] = g_time
             prev[(u, u_state)] = (v, v_state)
-            heapq.heappush(heap, (time, u, u_state))
+            f_time = g_time + h_cost(u, v_state, u_state)
+            heapq.heappush(heap, (f_time, u, u_state))
             step.pushed.append(u)
             step.pushed_edges.append(g.edge_id[(v, u)])
 
     # Frontend
     trace = Trace(c.start, c.goal)
-    trace.cost_unit = "min"            # 비용 = 길이(m) ÷ 상태별 속도 (분)
+    trace.cost_unit = "min"
     trace.extra.update(walk_kmh=c.walk_kmh, drive_kmh=c.drive_kmh, drive_rule=c.drive_rule)
-    
     end_state = None
     while heap:
-        time, v, v_state = heapq.heappop(heap)
-        if time > cost[(v, v_state)]:
+        f, v, v_state = heapq.heappop(heap)
+        before = prev[(v, v_state)]
+        p_state = before[1] if before else v_state
+        time = cost[(v, v_state)]
+        if f > time + h_cost(v, p_state, v_state):
             continue
 
-        before = prev[(v, v_state)]
         step = Step(len(trace.steps), v, time, 0.0, time, before[0] if before else None, state=v_state)
         trace.steps.append(step)
 
@@ -480,8 +484,8 @@ def vehicle_switch(c: Context):
             groups.append(dict(kind=names[v_state], edge_ids=[], meters=0.0, minutes=0.0))
         groups[-1]["edge_ids"].append(e)
         r = g.roads[e]
-        groups[-1]["meters"] += r.length_m                                    # weight가 초여도 거리는 m로
-        groups[-1]["minutes"] += minutes(r.length_m, speeds[vs.vehicle[v_state]])   # 비용과 같은 계산
+        groups[-1]["meters"] += r.length_m
+        groups[-1]["minutes"] += minutes(r.length_m, speeds[vs.vehicle[v_state]])
     trace.segments = groups
     trace.extra["distance_m"] = sum(x["meters"] for x in groups)
     return trace
@@ -564,7 +568,7 @@ register_algorithm("random", "Random Walk", lambda c: _walk(c, True),
                    hint="시드가 고정된 무작위 이동 · 예산 내 성공 보장 없음", default_heuristic="zero")
 register_algorithm("via", "경유지 Dijkstra", shortest_via, comparable=False, default_heuristic="zero",
                    hint="출발·도착에서 Dijkstra 2회 · 후보 중 총거리 최소인 경유지 선택")
-register_algorithm("vehicle_switch", "도보-차량-도보", vehicle_switch, comparable=False, default_heuristic="zero",
+register_algorithm("vehicle_switch", "도보-차량-도보", vehicle_switch, uses_heuristic=True, comparable=False, default_heuristic="zero",
                    hint="상태 3개짜리 Dijkstra · 이동 시간(분) 최소")
 register_algorithm("alt_uphill", "ALT 업힐 회피", alt_uphill, comparable=False, default_heuristic="zero",
                    hint="간선 비용 = 거리(계단은 ×s) + λ × 오르막(m) · ALT 표도 이 비용으로 계산 · 지도: 주황=경사 3%↑ 도로, 보라 점선=계단, 경로 분홍=오르막 검정=계단 파랑=평지·내리막")
